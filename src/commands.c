@@ -22,12 +22,10 @@ struct command kz_commands[KZ_CMD_MAX] = {
     {"start/stop timer",    COMMAND_PRESS,  command_timer},
     {"reset timer",         COMMAND_PRESS,  command_timer_reset},
     {"title screen",        COMMAND_PRESS,  command_title_screen},
-#ifndef LITE
     {"save state",          COMMAND_PRESS,  command_save_state},
     {"load state",          COMMAND_PRESS,  command_load_state},
     {"prev state",          COMMAND_PRESS,  command_prev_state},
     {"next state",          COMMAND_PRESS,  command_next_state},
-#endif
     {"save memfile",        COMMAND_PRESS,  command_save_memfile},
     {"load memfile",        COMMAND_PRESS,  command_load_memfile},
     {"prev memfile",        COMMAND_PRESS,  command_prev_memfile},
@@ -38,7 +36,6 @@ struct command kz_commands[KZ_CMD_MAX] = {
     {"next position",       COMMAND_PRESS,  command_next_position},
 };
 
-#ifndef LITE
 void command_prev_state(void) {
     kz.state_slot += STATE_MAX - 1;
     kz.state_slot %= STATE_MAX;
@@ -101,6 +98,38 @@ void command_save_state(){
     }
 
     kz_state_hdr_t *state = kz.states[kz.state_slot];
+#ifdef LITE
+    char name[sizeof(state->name)];
+    if(state != NULL) {
+        memcpy(name, state->name, sizeof(name));
+    } else {
+        strcpy(name, "untitled");
+    }
+
+    /* try to keep the old state until the new one has been saved */
+    kz_state_hdr_t *new_state = save_state_alloc();
+    if(new_state == NULL && state != NULL) {
+        free(state);
+        state = NULL;
+        kz.states[kz.state_slot] = NULL;
+        new_state = save_state_alloc();
+    }
+
+    if(new_state == NULL) {
+        kz_log("not enough memory for state %d", kz.state_slot);
+        return;
+    }
+
+    if(state != NULL) {
+        free(state);
+    }
+
+    new_state->z2_version = Z2_VERSION;
+    new_state->state_version = STATE_VERSION;
+    memcpy(new_state->name, name, sizeof(name));
+    kz.states[kz.state_slot] = new_state;
+    kz_log("saved state %d (%s, %dkb)", kz.state_slot, new_state->name, (new_state->size + 1023) / 1024);
+#else
     char *tmp_name = NULL;
     if(state != NULL) {
         tmp_name = malloc(sizeof(state->name));
@@ -152,8 +181,8 @@ void command_save_state(){
     kz_log("saved state %d (%s)", kz.state_slot, state->name);
 #endif
     kz.states[kz.state_slot] = state;
-}
 #endif
+}
 
 void command_timer(void){
     kz.timer_running = !kz.timer_running;

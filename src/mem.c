@@ -105,9 +105,9 @@ NOINLINE void *malloc(size_t size) {
                         blk->next->prev = next_free;
                     }
                     blk->next = next_free;
+                    blk->size = size;
                 }
 
-                blk->size = size;
                 blk->free = 0;
 
                 if(blk == heap_first_free[i]) {
@@ -152,7 +152,7 @@ NOINLINE void free(void *ptr) {
 
     blk->free = 1;
 
-    if(blk < heap_first_free[blk->heap]) {
+    if(heap_first_free[blk->heap] == NULL || blk < heap_first_free[blk->heap]) {
         heap_first_free[blk->heap] = blk;
     }
 }
@@ -172,25 +172,35 @@ NOINLINE void *realloc(void *ptr, size_t size) {
     heap_hdr_t *blk, *next_free;
 
     blk = (heap_hdr_t*)((char*)ptr - HDR_SIZE);
-    if(blk->size > size && blk->size - size >= HDR_SIZE + HEAP_ALIGN(1)) {
-        next_free = (heap_hdr_t*)((char*)blk + size);
-        next_free->free = 1;
-        next_free->size = blk->size - size - HDR_SIZE;
-        next_free->prev = blk;
-        next_free->next = blk->next;
-        next_free->heap = blk->heap;
-        if(blk->next != NULL) {
-            blk->next->prev = next_free;
-        }
-        blk->next = next_free;
-        blk->size = size;
-        if(heap_first_free[blk->heap] == blk) {
-            for(next_free = blk->next; next_free != NULL; next_free = next_free->next) {
-                if(next_free->free) {
-                    break;
+    if(blk->size >= size) {
+        if(blk->size - size >= HDR_SIZE + HEAP_ALIGN(1)) {
+            // split off the unused tail as a new free block, after the block's data
+            next_free = (heap_hdr_t*)((char*)blk + HDR_SIZE + size);
+            next_free->free = 1;
+            next_free->size = blk->size - size - HDR_SIZE;
+            next_free->prev = blk;
+            next_free->next = blk->next;
+            next_free->heap = blk->heap;
+            if(blk->next != NULL) {
+                blk->next->prev = next_free;
+            }
+            blk->next = next_free;
+            blk->size = size;
+
+            // merge with the following block if it is also free
+            heap_hdr_t *after = next_free->next;
+            if(after != NULL && after->free) {
+                next_free->size += after->size + HDR_SIZE;
+                next_free->next = after->next;
+                if(after->next != NULL) {
+                    after->next->prev = next_free;
                 }
             }
-            heap_first_free[blk->heap] = next_free;
+
+            heap_hdr_t **first_free = &heap_first_free[blk->heap];
+            if(*first_free == NULL || next_free < *first_free || *first_free == after) {
+                *first_free = next_free;
+            }
         }
 
         return ptr;
@@ -260,9 +270,9 @@ void *memalign(size_t align, size_t size) {
                         blk->next->prev = next_free;
                     }
                     blk->next = next_free;
+                    blk->size = size;
                 }
 
-                blk->size = size;
                 blk->free = 0;
 
                 if(blk == heap_first_free[i]) {
@@ -279,6 +289,31 @@ void *memalign(size_t align, size_t size) {
     }
 
     return malloc(size);
+}
+
+size_t mem_largest_free(size_t *total) {
+    if(!heap_initialized) {
+        heap_init();
+    }
+
+    size_t largest = 0;
+    size_t sum = 0;
+    for(int i = 0; i < HEAP_CNT; i++) {
+        for(heap_hdr_t *hdr = heap_first_free[i]; hdr != NULL; hdr = hdr->next) {
+            if(hdr->free) {
+                sum += hdr->size;
+                if(hdr->size > largest) {
+                    largest = hdr->size;
+                }
+            }
+        }
+    }
+
+    if(total != NULL) {
+        *total = sum;
+    }
+
+    return largest;
 }
 
 void get_free_mem(size_t *sizes) {

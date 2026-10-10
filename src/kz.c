@@ -640,12 +640,8 @@ static void init(void) {
     menu_submenu_add(&kz.main_menu, 0, 2, "cheats", create_cheats_menu());
     menu_submenu_add(&kz.main_menu, 0, 3, "scene", create_scene_menu());
 
-#ifndef LITE
 #define Y 5
     menu_submenu_add(&kz.main_menu, 0, 4, "states", create_states_menu());
-#else
-#define Y 4
-#endif
     menu_submenu_add(&kz.main_menu, 0, Y, "watches", create_watches_menu());
     menu_submenu_add(&kz.main_menu, 0, Y + 1, "inventory", create_inventory_menu());
     menu_submenu_add(&kz.main_menu, 0, Y + 2, "equips", create_equips_menu());
@@ -682,13 +678,11 @@ static void init(void) {
 
     memset(&kz.log, 0, sizeof(kz.log));
 
-#ifndef LITE
     for(int i = 0; i < STATE_MAX; i++) {
         kz.states[i] = NULL;
     }
 
     kz.state_slot = 0;
-#endif
 
     kz.input_mask = BUTTON_DPAD;
     kz.stick_x_mask = 0x00;

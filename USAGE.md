@@ -140,7 +140,8 @@ The states menu will allow you to change the active savestate slot, create a nam
 **cur state** This will allow you to switch the change the active state. kz allows the saving of up to 5 states numbered from 0 to 4 use the **<** and **>** buttons to switch between them.  
 **state name** underneath the **cur state** section there will be a name for the current state.  **no state** will be displayed if currently no state is saved in the selected state.  **untitled** will be displayed as the default name when a state is created in the selected slot for the first time.  Selecting the state name will bring up a keyboard to rename the state.  
 **export** will allow you to export the currently saved state to the sd card  
-**import** will allow you to select an exported state to import to the current selected slot.
+**import** will allow you to select an exported state to import to the current selected slot.  
+**size/free** (lite versions only) displays the compressed size of the current state, and the amount of free memory kz has available for states.
 
 ### 2.5 Watches
 The Watches menu provides a list of custom memory watches
@@ -360,7 +361,14 @@ The lite version of kz, allows most of the kz features to be used on systems tha
 
 Because kz-lite must be placed in a much smaller memory area, features had to be elimiated in order to make this viable.  The [debug menu](#29-debug) is removed completely.
 
-SD Features are not implemented in lite versions.
+SD Features are not implemented in lite versions, so states cannot be exported or imported.
+
+### Save States in Lite
+Lite versions do not have enough free memory to hold an uncompressed save state, so states are compressed as they are created and decompressed directly back into game memory when they are loaded.  How many states fit depends on how much is going on in the current scene; a state saved in a busy scene uses more memory.  The [states menu](#24-states) shows the compressed size of the selected state, and how much memory kz has free.
+
+* Saving a state into a slot that already holds a state replaces it.  If there is not enough memory to keep both while saving, the old state is freed first.
+* If there is still not enough memory, `not enough memory for state` is displayed.  Clearing states in other slots will free memory.
+* A small amount of memory is always kept free so that menus can still load their textures.
 
 Item icons that are normally displayed in the [inventory menu](#26-inventory) are replaced with check boxes to enable/disable those items.  A tooltip is provided so which item is being switched is known.
 

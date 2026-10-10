@@ -1,4 +1,3 @@
-#ifndef LITE
 #include <stdint.h>
 #include <set/set.h>
 #include <mips.h>
@@ -7,9 +6,14 @@
 #include "zu.h"
 #include "kzresource.h"
 #include "kz.h"
-#include "hb_heap.h"
 #include "audio.h"
 #include "vc.h"
+#ifdef LITE
+#include "mem.h"
+#include "state_lz.h"
+#else
+#include "hb_heap.h"
+#endif
 
 #ifdef WIIVC
 #define MAYBENOINLINE __attribute__ ((noinline))
@@ -19,6 +23,38 @@
 
 static _Bool save_wr = 0;
 
+/* reads uncompressed data, used for the state header */
+static MAYBENOINLINE void st_read_raw(void **src, void *dst, size_t len){
+    char *p = *src;
+#ifdef WIIVC
+    hmemcpy(dst, p, len);
+#else
+    memcpy(dst, p, len);
+#endif
+    p += len;
+    *src = p;
+}
+
+#ifdef LITE
+/*
+* kz-lite cannot spare the memory for an uncompressed state, so every chunk
+* is lz compressed as it is written, and decompressed straight back into game
+* memory as it is read.
+*/
+static uint8_t     *st_end;
+static lz_hash_t   *st_hash;
+
+static void st_write(void **dst, void *src, size_t len){
+    if(save_wr) {
+        /* once the output buffer has overflowed, *dst stays NULL */
+        *dst = lz_compress(*dst, st_end, src, len, st_hash);
+    }
+}
+
+static void st_read(void **src, void *dst, size_t len){
+    *src = (void*)lz_decompress(*src, dst, len);
+}
+#else
 static MAYBENOINLINE void st_write(void **dst, void *src, size_t len){
     char *p = *dst;
 
@@ -34,15 +70,9 @@ static MAYBENOINLINE void st_write(void **dst, void *src, size_t len){
 }
 
 static MAYBENOINLINE void st_read(void **src, void *dst, size_t len){
-    char *p = *src;
-#ifdef WIIVC
-    hmemcpy(dst, p, len);
-#else
-    memcpy(dst, p, len);
-#endif
-    p += len;
-    *src = p;
+    st_read_raw(src, dst, len);
 }
+#endif
 
 static void st_skip(void **dest, size_t len){
     char *p = *dest;
@@ -107,7 +137,7 @@ void load_state(void *state){
     uint64_t offset;
 
     kz_state_hdr_t hdr;
-    st_read(&p, &hdr, sizeof(hdr));
+    st_read_raw(&p, &hdr, sizeof(hdr));
 
     load_time = osGetTime();
 
@@ -1049,8 +1079,57 @@ size_t save_state(void *state){
     st_write(&p, z2_staff_notes, 0x1E);
     st_write(&p, &z2_song_ptr, sizeof(z2_song_ptr));
     st_write(&p, &z2_unk_song_pos, sizeof(z2_unk_song_pos));
+
+#ifdef LITE
+    if(p == NULL) {
+        /* compressed state did not fit in the output buffer */
+        return 0;
+    }
+#endif
     return (char*)p - (char*)state;
 }
+
+#ifdef LITE
+kz_state_hdr_t *save_state_alloc(void){
+    lz_hash_t *hash = malloc(sizeof(*hash) * LZ_HASH_SIZE);
+    if(hash == NULL) {
+        return NULL;
+    }
+    memset(hash, 0, sizeof(*hash) * LZ_HASH_SIZE);
+
+    /* compress into the largest block that still leaves the reserve free */
+    size_t total;
+    size_t cap = mem_largest_free(&total);
+    if(total < STATE_MEM_RESERVE) {
+        cap = 0;
+    } else if(cap > total - STATE_MEM_RESERVE) {
+        cap = total - STATE_MEM_RESERVE;
+    }
+    cap &= ~(size_t)0xF;
+
+    kz_state_hdr_t *state = NULL;
+    if(cap >= STATE_MIN_ALLOC) {
+        state = malloc(cap);
+    }
+
+    if(state != NULL) {
+        st_end = (uint8_t*)state + cap;
+        st_hash = hash;
+        size_t size = save_state(state);
+        if(size == 0) {
+            free(state);
+            state = NULL;
+        } else {
+            /* give back the unused part of the buffer */
+            state = realloc(state, size);
+            state->size = size;
+        }
+    }
+
+    free(hash);
+    return state;
+}
+#endif
 
 struct state_compat {
     uint16_t    state_version;
@@ -1095,5 +1174,3 @@ int state_is_valid(kz_state_hdr_t *state) {
 
     return 0;
 }
-
-#endif
