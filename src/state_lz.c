@@ -22,51 +22,64 @@ static inline uint32_t lz_hash(const uint8_t *p) {
     return (v * 2654435761u) >> (32 - LZ_HASH_BITS);
 }
 
-static uint8_t *lz_emit_literals(uint8_t *out, uint8_t *out_end, const uint8_t *lit, size_t cnt) {
+static inline int lz_put(lz_stream_t *out, uint8_t b) {
+    if(out->p == out->end && !out->next(out)) {
+        return 0;
+    }
+    *out->p++ = b;
+    return 1;
+}
+
+static inline uint8_t lz_get(lz_stream_t *in) {
+    if(in->p == in->end) {
+        in->next(in);
+    }
+    return *in->p++;
+}
+
+static int lz_emit_literals(lz_stream_t *out, const uint8_t *lit, size_t cnt) {
     while(cnt > 0) {
         size_t run = cnt > LZ_MAX_LIT ? LZ_MAX_LIT : cnt;
-        if(out_end - out < run + 1) {
-            return NULL;
+        if(!lz_put(out, run - 1)) {
+            return 0;
         }
-        *out++ = run - 1;
         for(size_t i = 0; i < run; i++) {
-            *out++ = lit[i];
+            if(!lz_put(out, lit[i])) {
+                return 0;
+            }
         }
         lit += run;
         cnt -= run;
     }
-    return out;
+    return 1;
 }
 
-static uint8_t *lz_emit_match(uint8_t *out, uint8_t *out_end, size_t dist, size_t len) {
+static int lz_emit_match(lz_stream_t *out, size_t dist, size_t len) {
     len -= LZ_MIN_MATCH;
-    size_t ext_cnt = len >= LZ_LEN_EXT ? (len - LZ_LEN_EXT) / 0xFF + 1 : 0;
-    if(out_end - out < ext_cnt + 3) {
-        return NULL;
+    if(!lz_put(out, 0x80 | (len >= LZ_LEN_EXT ? LZ_LEN_EXT : len)) ||
+       !lz_put(out, dist >> 8) || !lz_put(out, dist)) {
+        return 0;
     }
-    *out++ = 0x80 | (len >= LZ_LEN_EXT ? LZ_LEN_EXT : len);
-    *out++ = dist >> 8;
-    *out++ = dist;
     if(len >= LZ_LEN_EXT) {
         len -= LZ_LEN_EXT;
         while(len >= 0xFF) {
-            *out++ = 0xFF;
+            if(!lz_put(out, 0xFF)) {
+                return 0;
+            }
             len -= 0xFF;
         }
-        *out++ = len;
+        if(!lz_put(out, len)) {
+            return 0;
+        }
     }
-    return out;
+    return 1;
 }
 
-uint8_t *lz_compress(uint8_t *out, uint8_t *out_end, const void *src, size_t len, lz_hash_t *hash) {
+int lz_compress(lz_stream_t *out, const void *src, size_t len, lz_hash_t *hash) {
     const uint8_t *start = src;
     const uint8_t *ip = start;
     const uint8_t *end = start + len;
     const uint8_t *lit = start;
-
-    if(out == NULL) {
-        return NULL;
-    }
 
     if(len >= LZ_MIN_MATCH) {
         const uint8_t *match_end = end - (LZ_MIN_MATCH - 1);
@@ -88,13 +101,8 @@ uint8_t *lz_compress(uint8_t *out, uint8_t *out_end, const void *src, size_t len
                 mlen++;
             }
 
-            out = lz_emit_literals(out, out_end, lit, ip - lit);
-            if(out == NULL) {
-                return NULL;
-            }
-            out = lz_emit_match(out, out_end, ip - ref, mlen);
-            if(out == NULL) {
-                return NULL;
+            if(!lz_emit_literals(out, lit, ip - lit) || !lz_emit_match(out, ip - ref, mlen)) {
+                return 0;
             }
 
             ip += mlen;
@@ -107,28 +115,28 @@ uint8_t *lz_compress(uint8_t *out, uint8_t *out_end, const void *src, size_t len
         }
     }
 
-    return lz_emit_literals(out, out_end, lit, end - lit);
+    return lz_emit_literals(out, lit, end - lit);
 }
 
-const uint8_t *lz_decompress(const uint8_t *src, void *dst, size_t len) {
+void lz_decompress(lz_stream_t *in, void *dst, size_t len) {
     uint8_t *op = dst;
     uint8_t *end = op + len;
 
     while(op < end) {
-        uint8_t token = *src++;
+        uint8_t token = lz_get(in);
         if(token < 0x80) {
             size_t run = token + 1;
             for(size_t i = 0; i < run; i++) {
-                *op++ = *src++;
+                *op++ = lz_get(in);
             }
         } else {
             size_t mlen = token & LZ_LEN_EXT;
-            size_t dist = (src[0] << 8) | src[1];
-            src += 2;
+            size_t dist = lz_get(in) << 8;
+            dist |= lz_get(in);
             if(mlen == LZ_LEN_EXT) {
                 uint8_t ext;
                 do {
-                    ext = *src++;
+                    ext = lz_get(in);
                     mlen += ext;
                 } while(ext == 0xFF);
             }
@@ -141,8 +149,6 @@ const uint8_t *lz_decompress(const uint8_t *src, void *dst, size_t len) {
             }
         }
     }
-
-    return src;
 }
 
 #endif

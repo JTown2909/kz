@@ -42,6 +42,25 @@ void    load_state      (void *state);
 int     state_is_valid  (kz_state_hdr_t *state);
 
 #ifdef LITE
+#include "state_lz.h"
+
+/*
+ * a lite state is a list of chunks, so it can use whatever free blocks the
+ * heap has.  the first chunk's data starts with the kz_state_hdr_t, and
+ * kz.states[] points at that header.  hdr->size is the total of all chunks'
+ * used bytes, which is also the size of an exported state file.
+ */
+typedef struct state_chunk_s state_chunk_t;
+struct state_chunk_s {
+    state_chunk_t  *next;
+    size_t          used;
+    size_t          cap;
+    uint8_t         data[];
+};
+
+#define STATE_READ_MEMORY   1
+#define STATE_READ_IO       2
+
 /**
  * Saves a compressed state into newly allocated memory.
  * Returns NULL if there is not enough free memory to hold the state.
@@ -49,9 +68,23 @@ int     state_is_valid  (kz_state_hdr_t *state);
 kz_state_hdr_t *save_state_alloc(void);
 
 /**
- * Allocates memory for a state, keeping STATE_MEM_RESERVE free.
+ * Frees all memory used by a state.
  */
-void           *state_mem_alloc(size_t size);
+void            state_free      (kz_state_hdr_t *state);
+
+/**
+ * Writes the state, header included, through write_fn.  Returns 0 if write_fn failed.
+ */
+int             state_write_file(kz_state_hdr_t *state, int (*write_fn)(void *ctx, const void *buf, size_t len), void *ctx);
+
+/**
+ * Allocates a state described by hdr and fills it through read_fn with the
+ * rest of the state after the header.  Returns NULL and sets error to
+ * STATE_READ_MEMORY or STATE_READ_IO on failure.
+ */
+kz_state_hdr_t *state_read_file (const kz_state_hdr_t *hdr, int (*read_fn)(void *ctx, void *buf, size_t len), void *ctx, int *error);
+
+void            state_stream_open(lz_stream_t *stream, kz_state_hdr_t *state, void *pos);
 #endif
 
 #endif

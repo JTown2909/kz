@@ -15,5 +15,6 @@ void *calloc(size_t item_cnt, size_t item_size);
 void *memalign(size_t align, size_t size);
 void get_free_mem(size_t *sizes);
 size_t mem_largest_free(size_t *total);
+void mem_shrink(void *ptr, size_t size);
 
 #endif

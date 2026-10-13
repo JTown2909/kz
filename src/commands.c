@@ -109,7 +109,7 @@ void command_save_state(){
     /* try to keep the old state until the new one has been saved */
     kz_state_hdr_t *new_state = save_state_alloc();
     if(new_state == NULL && state != NULL) {
-        free(state);
+        state_free(state);
         state = NULL;
         kz.states[kz.state_slot] = NULL;
         new_state = save_state_alloc();
@@ -121,7 +121,7 @@ void command_save_state(){
     }
 
     if(state != NULL) {
-        free(state);
+        state_free(state);
     }
 
     new_state->z2_version = Z2_VERSION;

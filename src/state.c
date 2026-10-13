@@ -40,19 +40,24 @@ static MAYBENOINLINE void st_read_raw(void **src, void *dst, size_t len){
 * kz-lite cannot spare the memory for an uncompressed state, so every chunk
 * is lz compressed as it is written, and decompressed straight back into game
 * memory as it is read.
+*
+* the compressed state does not need contiguous memory: it is stored in a list
+* of state_chunk_t, so it can use whatever free blocks the heap has.  the state
+* header is at the start of the first chunk's data.
 */
-static uint8_t     *st_end;
+static lz_stream_t  st_out;
+static lz_stream_t  st_in;
 static lz_hash_t   *st_hash;
+static _Bool        st_failed;
 
 static void st_write(void **dst, void *src, size_t len){
-    if(save_wr) {
-        /* once the output buffer has overflowed, *dst stays NULL */
-        *dst = lz_compress(*dst, st_end, src, len, st_hash);
+    if(save_wr && !st_failed && !lz_compress(&st_out, src, len, st_hash)) {
+        st_failed = 1;
     }
 }
 
 static void st_read(void **src, void *dst, size_t len){
-    *src = (void*)lz_decompress(*src, dst, len);
+    lz_decompress(&st_in, dst, len);
 }
 #else
 static MAYBENOINLINE void st_write(void **dst, void *src, size_t len){
@@ -138,6 +143,9 @@ void load_state(void *state){
 
     kz_state_hdr_t hdr;
     st_read_raw(&p, &hdr, sizeof(hdr));
+#ifdef LITE
+    state_stream_open(&st_in, state, p);
+#endif
 
     load_time = osGetTime();
 
@@ -1081,70 +1089,210 @@ size_t save_state(void *state){
     st_write(&p, &z2_unk_song_pos, sizeof(z2_unk_song_pos));
 
 #ifdef LITE
-    if(p == NULL) {
-        /* compressed state did not fit in the output buffer */
-        return 0;
-    }
-#endif
+    /* 0 if the compressed state did not fit in memory */
+    return !st_failed;
+#else
     return (char*)p - (char*)state;
+#endif
 }
 
 #ifdef LITE
-void *state_mem_alloc(size_t size){
+#define STATE_CHUNK(hdr)    ((state_chunk_t*)((char*)(hdr) - offsetof(state_chunk_t, data)))
+#define STATE_CHUNK_MIN     0x400
+
+/* hands out chunks from the largest free blocks, keeping STATE_MEM_RESERVE free */
+typedef struct {
+    size_t          limit;
+    size_t          allocated;
+    state_chunk_t  *first;
+    state_chunk_t  *last;
+} chunk_alloc_t;
+
+static int chunk_alloc_init(chunk_alloc_t *alloc){
     size_t total;
-    size_t largest = mem_largest_free(&total);
-    if(size > largest || size + STATE_MEM_RESERVE > total) {
+    mem_largest_free(&total);
+    alloc->limit = total > STATE_MEM_RESERVE ? total - STATE_MEM_RESERVE : 0;
+    alloc->allocated = 0;
+    alloc->first = NULL;
+    alloc->last = NULL;
+    return alloc->limit >= STATE_MIN_ALLOC;
+}
+
+static void chunks_free(state_chunk_t *chunk){
+    while(chunk != NULL) {
+        state_chunk_t *next = chunk->next;
+        free(chunk);
+        chunk = next;
+    }
+}
+
+/* allocate a chunk with room for up to want bytes, or as much as possible if want is 0 */
+static state_chunk_t *chunk_new(chunk_alloc_t *alloc, size_t want){
+    size_t size = mem_largest_free(NULL);
+    size_t budget = alloc->limit - alloc->allocated;
+    if(size > budget) {
+        size = budget;
+    }
+    if(want != 0 && size > sizeof(state_chunk_t) + want) {
+        size = sizeof(state_chunk_t) + want;
+    }
+    size &= ~(size_t)0xF;
+    if(size < sizeof(state_chunk_t) + STATE_CHUNK_MIN && (want == 0 || size < sizeof(state_chunk_t) + want)) {
         return NULL;
     }
-    return malloc(size);
+
+    state_chunk_t *chunk = malloc(size);
+    if(chunk == NULL) {
+        return NULL;
+    }
+    chunk->next = NULL;
+    chunk->used = 0;
+    chunk->cap = size - sizeof(*chunk);
+    alloc->allocated += size;
+    if(alloc->last != NULL) {
+        alloc->last->next = chunk;
+    } else {
+        alloc->first = chunk;
+    }
+    alloc->last = chunk;
+    return chunk;
+}
+
+/* give back the unused end of a chunk, the chunk stays where it is */
+static void chunk_trim(chunk_alloc_t *alloc, state_chunk_t *chunk){
+    size_t unused = chunk->cap - chunk->used;
+    mem_shrink(chunk, sizeof(*chunk) + chunk->used);
+    chunk->cap = chunk->used;
+    alloc->allocated -= unused;
+}
+
+static int out_next(lz_stream_t *stream){
+    chunk_alloc_t *alloc = stream->data;
+    alloc->last->used = alloc->last->cap;
+    state_chunk_t *chunk = chunk_new(alloc, 0);
+    if(chunk == NULL) {
+        return 0;
+    }
+    stream->p = chunk->data;
+    stream->end = chunk->data + chunk->cap;
+    return 1;
+}
+
+static int in_next(lz_stream_t *stream){
+    state_chunk_t *chunk = ((state_chunk_t*)stream->data)->next;
+    stream->data = chunk;
+    stream->p = chunk->data;
+    stream->end = chunk->data + chunk->used;
+    return 1;
+}
+
+void state_stream_open(lz_stream_t *stream, kz_state_hdr_t *state, void *pos){
+    state_chunk_t *chunk = STATE_CHUNK(state);
+    stream->p = pos;
+    stream->end = chunk->data + chunk->used;
+    stream->next = in_next;
+    stream->data = chunk;
+}
+
+void state_free(kz_state_hdr_t *state){
+    if(state != NULL) {
+        chunks_free(STATE_CHUNK(state));
+    }
 }
 
 kz_state_hdr_t *save_state_alloc(void){
-    /*
-    * the state may use everything but the reserve.  the hash table is only
-    * needed while compressing, so it is allowed to dip into the reserve.
-    */
-    size_t total;
-    mem_largest_free(&total);
-    if(total < STATE_MEM_RESERVE + STATE_MIN_ALLOC) {
+    chunk_alloc_t alloc;
+    if(!chunk_alloc_init(&alloc)) {
         return NULL;
     }
-    size_t limit = total - STATE_MEM_RESERVE;
 
-    lz_hash_t *hash = malloc(sizeof(*hash) * LZ_HASH_SIZE);
-    if(hash == NULL) {
+    /* compress into the largest free block first, more chunks are added as needed */
+    state_chunk_t *first = chunk_new(&alloc, 0);
+    if(first == NULL) {
         return NULL;
     }
-    memset(hash, 0, sizeof(*hash) * LZ_HASH_SIZE);
 
-    /* compress into the largest free block, up to the limit */
-    size_t cap = mem_largest_free(NULL);
-    if(cap > limit) {
-        cap = limit;
+    /* the hash table is only needed while compressing, it may dip into the reserve */
+    size_t hash_size = sizeof(*st_hash) * LZ_HASH_SIZE;
+    st_hash = malloc(hash_size);
+    if(st_hash == NULL && first->cap > hash_size + STATE_CHUNK_MIN + 0x40) {
+        first->used = first->cap - hash_size - 0x40;
+        chunk_trim(&alloc, first);
+        st_hash = malloc(hash_size);
     }
-    cap &= ~(size_t)0xF;
+    if(st_hash == NULL) {
+        chunks_free(first);
+        return NULL;
+    }
+    memset(st_hash, 0, hash_size);
 
-    kz_state_hdr_t *state = NULL;
-    if(cap >= STATE_MIN_ALLOC) {
-        state = malloc(cap);
+    kz_state_hdr_t *state = (kz_state_hdr_t*)first->data;
+    st_out.p = first->data + sizeof(*state);
+    st_out.end = first->data + first->cap;
+    st_out.next = out_next;
+    st_out.data = &alloc;
+    st_failed = 0;
+
+    int ok = save_state(state);
+    free(st_hash);
+    st_hash = NULL;
+    if(!ok) {
+        chunks_free(alloc.first);
+        return NULL;
     }
 
-    if(state != NULL) {
-        st_end = (uint8_t*)state + cap;
-        st_hash = hash;
-        size_t size = save_state(state);
-        if(size == 0) {
-            free(state);
-            state = NULL;
-        } else {
-            /* give back the unused part of the buffer */
-            state = realloc(state, size);
-            state->size = size;
+    alloc.last->used = st_out.p - alloc.last->data;
+    chunk_trim(&alloc, alloc.last);
+
+    size_t size = 0;
+    for(state_chunk_t *chunk = alloc.first; chunk != NULL; chunk = chunk->next) {
+        size += chunk->used;
+    }
+    state->size = size;
+    return state;
+}
+
+int state_write_file(kz_state_hdr_t *state, int (*write_fn)(void *ctx, const void *buf, size_t len), void *ctx){
+    for(state_chunk_t *chunk = STATE_CHUNK(state); chunk != NULL; chunk = chunk->next) {
+        if(!write_fn(ctx, chunk->data, chunk->used)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+kz_state_hdr_t *state_read_file(const kz_state_hdr_t *hdr, int (*read_fn)(void *ctx, void *buf, size_t len), void *ctx, int *error){
+    chunk_alloc_t alloc;
+    *error = STATE_READ_MEMORY;
+    if(!chunk_alloc_init(&alloc)) {
+        return NULL;
+    }
+
+    size_t left = hdr->size;
+    while(left > 0) {
+        state_chunk_t *chunk = chunk_new(&alloc, left);
+        if(chunk == NULL) {
+            chunks_free(alloc.first);
+            return NULL;
+        }
+        chunk->used = chunk->cap;
+        left -= chunk->used;
+    }
+
+    /* the header was already read by the caller */
+    state_chunk_t *first = alloc.first;
+    memcpy(first->data, hdr, sizeof(*hdr));
+    for(state_chunk_t *chunk = first; chunk != NULL; chunk = chunk->next) {
+        size_t skip = chunk == first ? sizeof(*hdr) : 0;
+        if(!read_fn(ctx, chunk->data + skip, chunk->used - skip)) {
+            *error = STATE_READ_IO;
+            chunks_free(first);
+            return NULL;
         }
     }
 
-    free(hash);
-    return state;
+    *error = 0;
+    return (kz_state_hdr_t*)first->data;
 }
 #endif
 

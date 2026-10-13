@@ -82,16 +82,22 @@ static char state_mem_text[40];
 
 static int state_mem_onupdate(event_handler_t *handler, menu_event_t event, void **event_data) {
     size_t total;
-    size_t largest = mem_largest_free(&total);
+    mem_largest_free(&total);
     kz_state_hdr_t *state = kz.states[kz.state_slot];
     int state_kb = state != NULL ? (state->size + 1023) / 1024 : 0;
-    snprintf(state_mem_text, sizeof(state_mem_text), "size %dkb free %dkb max %dkb",
-             state_kb, (int)(total / 1024), (int)(largest / 1024));
+    snprintf(state_mem_text, sizeof(state_mem_text), "size %dkb free %dkb", state_kb, (int)(total / 1024));
     return 1;
 }
 
+static int file_write(void *ctx, const void *buf, size_t len){
+    return write(*(int*)ctx, (void*)buf, len) == len;
+}
+
+static int file_read(void *ctx, void *buf, size_t len){
+    return read(*(int*)ctx, buf, len) == len;
+}
+
 static void do_export_state(char *path, void *data){
-    kz_state_hdr_t *state = kz.states[kz.state_slot];
     int file = creat(path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if(file == -1) {
         kz_log("could not create file");
@@ -99,7 +105,7 @@ static void do_export_state(char *path, void *data){
     }
 
     /* the compressed state, header included */
-    if(write(file, state, state->size) != state->size) {
+    if(!state_write_file(kz.states[kz.state_slot], file_write, &file)) {
         kz_log("could not write state");
     } else {
         kz_log("exported state %d", kz.state_slot);
@@ -116,8 +122,7 @@ static void do_import_state(char *path, void *data){
 
     struct stat sbuf;
     kz_state_hdr_t hdr;
-    if(stat(path, &sbuf) != 0 || sbuf.st_size < sizeof(hdr) ||
-       read(file, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+    if(stat(path, &sbuf) != 0 || sbuf.st_size < sizeof(hdr) || !file_read(&file, &hdr, sizeof(hdr))) {
         kz_log("could not read state");
         close(file);
         return;
@@ -131,31 +136,28 @@ static void do_import_state(char *path, void *data){
     }
 
     /* keep the state in this slot unless its memory is needed */
-    kz_state_hdr_t *state = state_mem_alloc(hdr.size);
-    if(state == NULL && kz.states[kz.state_slot] != NULL) {
-        free(kz.states[kz.state_slot]);
+    int error;
+    kz_state_hdr_t *state = state_read_file(&hdr, file_read, &file, &error);
+    if(state == NULL && error == STATE_READ_MEMORY && kz.states[kz.state_slot] != NULL) {
+        state_free(kz.states[kz.state_slot]);
         kz.states[kz.state_slot] = NULL;
-        state = state_mem_alloc(hdr.size);
+        /* nothing was read yet, so the file is still positioned after the header */
+        state = state_read_file(&hdr, file_read, &file, &error);
     }
+    close(file);
+
     if(state == NULL) {
-        kz_log("not enough memory for state %d", kz.state_slot);
-        close(file);
+        if(error == STATE_READ_MEMORY) {
+            kz_log("not enough memory for state %d", kz.state_slot);
+        } else {
+            kz_log("could not read state");
+        }
         return;
     }
 
-    memcpy(state, &hdr, sizeof(hdr));
-    size_t rest = hdr.size - sizeof(hdr);
-    if(read(file, (char*)state + sizeof(hdr), rest) != rest) {
-        kz_log("could not read state");
-        free(state);
-    } else {
-        if(kz.states[kz.state_slot] != NULL) {
-            free(kz.states[kz.state_slot]);
-        }
-        kz.states[kz.state_slot] = state;
-        kz_log("imported to state %d", kz.state_slot);
-    }
-    close(file);
+    state_free(kz.states[kz.state_slot]);
+    kz.states[kz.state_slot] = state;
+    kz_log("imported to state %d", kz.state_slot);
 }
 #else
 static void do_export_state(char *path, void *data){
@@ -233,6 +235,8 @@ static int delete_state_onactivate(event_handler_t *handler, menu_event_t event,
     if(kz.states[kz.state_slot]) {
 #ifdef WIIVC
         hfree(kz.states[kz.state_slot]);
+#elif defined(LITE)
+        state_free(kz.states[kz.state_slot]);
 #else
         free(kz.states[kz.state_slot]);
 #endif
