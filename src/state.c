@@ -1090,20 +1090,37 @@ size_t save_state(void *state){
 }
 
 #ifdef LITE
+void *state_mem_alloc(size_t size){
+    size_t total;
+    size_t largest = mem_largest_free(&total);
+    if(size > largest || size + STATE_MEM_RESERVE > total) {
+        return NULL;
+    }
+    return malloc(size);
+}
+
 kz_state_hdr_t *save_state_alloc(void){
+    /*
+    * the state may use everything but the reserve.  the hash table is only
+    * needed while compressing, so it is allowed to dip into the reserve.
+    */
+    size_t total;
+    mem_largest_free(&total);
+    if(total < STATE_MEM_RESERVE + STATE_MIN_ALLOC) {
+        return NULL;
+    }
+    size_t limit = total - STATE_MEM_RESERVE;
+
     lz_hash_t *hash = malloc(sizeof(*hash) * LZ_HASH_SIZE);
     if(hash == NULL) {
         return NULL;
     }
     memset(hash, 0, sizeof(*hash) * LZ_HASH_SIZE);
 
-    /* compress into the largest block that still leaves the reserve free */
-    size_t total;
-    size_t cap = mem_largest_free(&total);
-    if(total < STATE_MEM_RESERVE) {
-        cap = 0;
-    } else if(cap > total - STATE_MEM_RESERVE) {
-        cap = total - STATE_MEM_RESERVE;
+    /* compress into the largest free block, up to the limit */
+    size_t cap = mem_largest_free(NULL);
+    if(cap > limit) {
+        cap = limit;
     }
     cap &= ~(size_t)0xF;
 
@@ -1149,6 +1166,10 @@ int state_is_valid(kz_state_hdr_t *state) {
     if(state->z2_version != Z2_VERSION) {
         return -1;
     }
+
+#ifdef LITE
+    return state->state_version == STATE_HDR_VERSION ? 0 : -2;
+#endif
 
     if(state->state_version == STATE_VERSION){
         return 0;

@@ -1,13 +1,13 @@
 #include "kz.h"
 #include "menu.h"
 #include "kzresource.h"
+#include <sys/stat.h>
+#include "menu_file.h"
+#include "sys.h"
 #ifdef LITE
 #include "mem.h"
 #include "printf.h"
 #else
-#include <sys/stat.h>
-#include "menu_file.h"
-#include "sys.h"
 #include "hb_heap.h"
 #endif
 
@@ -88,6 +88,74 @@ static int state_mem_onupdate(event_handler_t *handler, menu_event_t event, void
     snprintf(state_mem_text, sizeof(state_mem_text), "size %dkb free %dkb", state_kb, (int)(total / 1024));
     return 1;
 }
+
+static void do_export_state(char *path, void *data){
+    kz_state_hdr_t *state = kz.states[kz.state_slot];
+    int file = creat(path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if(file == -1) {
+        kz_log("could not create file");
+        return;
+    }
+
+    /* the compressed state, header included */
+    if(write(file, state, state->size) != state->size) {
+        kz_log("could not write state");
+    } else {
+        kz_log("exported state %d", kz.state_slot);
+    }
+    close(file);
+}
+
+static void do_import_state(char *path, void *data){
+    int file = open(path, O_RDONLY);
+    if(file == -1) {
+        kz_log("could not open file");
+        return;
+    }
+
+    struct stat sbuf;
+    kz_state_hdr_t hdr;
+    if(stat(path, &sbuf) != 0 || sbuf.st_size < sizeof(hdr) ||
+       read(file, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+        kz_log("could not read state");
+        close(file);
+        return;
+    }
+
+    int state_res = state_is_valid(&hdr);
+    if(state_res != 0 || hdr.size != sbuf.st_size) {
+        kz_log(state_res == -1 ? "wrong mm version" : "wrong state version");
+        close(file);
+        return;
+    }
+
+    /* keep the state in this slot unless its memory is needed */
+    kz_state_hdr_t *state = state_mem_alloc(hdr.size);
+    if(state == NULL && kz.states[kz.state_slot] != NULL) {
+        free(kz.states[kz.state_slot]);
+        kz.states[kz.state_slot] = NULL;
+        state = state_mem_alloc(hdr.size);
+    }
+    if(state == NULL) {
+        kz_log("not enough memory for state %d", kz.state_slot);
+        close(file);
+        return;
+    }
+
+    memcpy(state, &hdr, sizeof(hdr));
+    size_t rest = hdr.size - sizeof(hdr);
+    if(read(file, (char*)state + sizeof(hdr), rest) != rest) {
+        kz_log("could not read state");
+        free(state);
+    } else {
+        if(kz.states[kz.state_slot] != NULL) {
+            free(kz.states[kz.state_slot]);
+        }
+        kz.states[kz.state_slot] = state;
+        kz_log("imported to state %d", kz.state_slot);
+    }
+    close(file);
+}
 #else
 static void do_export_state(char *path, void *data){
     int file = creat(path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -140,6 +208,8 @@ static void do_import_state(char *path, void *data){
 
 }
 
+#endif
+
 static int export_state_onactivate(event_handler_t *handler, menu_event_t event, void **event_data)
 {
     if(!kz.states[kz.state_slot])
@@ -157,8 +227,6 @@ static int import_state_onactivate(event_handler_t *handler, menu_event_t event,
     menu_file_get(FILE_MODE_LOAD, "state", ".kzs", do_import_state, NULL);
     return 1;
 }
-
-#endif
 
 static int delete_state_onactivate(event_handler_t *handler, menu_event_t event, void **event_data) {
     if(kz.states[kz.state_slot]) {
@@ -201,12 +269,9 @@ menu_t *create_states_menu(void) {
     menu_item_t *mem_item = menu_label_add(&states_menu, 0, 3, state_mem_text);
     mem_item->color = COLOR_FADED;
     menu_item_register_event(mem_item, MENU_EVENT_UPDATE, state_mem_onupdate, NULL);
-#define X 0
-#else
+#endif
     menu_gfx_button_add(&states_menu, 0, 4, pexport_sprite, export_state_onactivate, NULL)->tooltip = "export state";
     menu_gfx_button_add(&states_menu, 4, 4, pimport_sprite, import_state_onactivate, NULL)->tooltip = "import state";
-#define X 8
-#endif
 
     static menu_sprite_t clear_state_sprite = {
         NULL,   2,  2,  DEFAULT_COLOR,  DEFAULT_COLOR,
@@ -215,7 +280,6 @@ menu_t *create_states_menu(void) {
     };
 
     clear_state_sprite.texture = resource_get(R_KZ_SD);
-    menu_gfx_button_add(&states_menu, X, 4, &clear_state_sprite, delete_state_onactivate, NULL)->tooltip = "clear state";
-#undef X
+    menu_gfx_button_add(&states_menu, 8, 4, &clear_state_sprite, delete_state_onactivate, NULL)->tooltip = "clear state";
     return &states_menu;
 }

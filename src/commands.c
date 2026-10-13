@@ -125,7 +125,7 @@ void command_save_state(){
     }
 
     new_state->z2_version = Z2_VERSION;
-    new_state->state_version = STATE_VERSION;
+    new_state->state_version = STATE_HDR_VERSION;
     memcpy(new_state->name, name, sizeof(name));
     kz.states[kz.state_slot] = new_state;
     kz_log("saved state %d (%s, %dkb)", kz.state_slot, new_state->name, (new_state->size + 1023) / 1024);
