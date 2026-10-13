@@ -36,6 +36,8 @@ enum {
     KZ_CMD_LOAD_POSITION,
     KZ_CMD_PREV_POSITION,
     KZ_CMD_NEXT_POSITION,
+    KZ_CMD_RECORD_MACRO,
+    KZ_CMD_PLAY_MACRO,
     KZ_CMD_MAX
 };
 
@@ -75,6 +77,8 @@ void    command_load_state      (void);
 void    command_save_state      (void);
 void    command_prev_state      (void);
 void    command_next_state      (void);
+void    command_record_macro    (void);
+void    command_play_macro      (void);
 
 extern struct command kz_commands[KZ_CMD_MAX];
 

@@ -114,6 +114,7 @@ typedef struct {
     uint8_t                 stick_x_mask, stick_y_mask;
     kz_state_hdr_t         *states[STATE_MAX];
     int                     state_slot;
+    int32_t                 state_macro_frame[STATE_MAX];
     menu_t                  pause_menu;
     menu_item_t            *pause_item_list;
 } kz_ctxt_t;
@@ -127,6 +128,7 @@ menu_t *create_file_menu        (void);
 menu_t *create_equips_menu      (void);
 menu_t *create_settings_menu    (void);
 menu_t *create_states_menu      (void);
+menu_t *create_macro_menu       (void);
 #ifndef LITE
 menu_t *create_debug_menu       (void);
 #endif

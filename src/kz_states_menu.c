@@ -157,6 +157,7 @@ static void do_import_state(char *path, void *data){
 
     state_free(kz.states[kz.state_slot]);
     kz.states[kz.state_slot] = state;
+    kz.state_macro_frame[kz.state_slot] = -1;
     kz_log("imported to state %d", kz.state_slot);
 }
 #else
@@ -197,6 +198,7 @@ static void do_import_state(char *path, void *data){
         if(state_res == 0) {
             read(file, (char*)state + sizeof(*state), sbuf.st_size - sizeof(*state));
             kz.states[kz.state_slot] = state;
+            kz.state_macro_frame[kz.state_slot] = -1;
             kz_log("imported to state %d", kz.state_slot);
         } else {
 #ifdef WIIVC

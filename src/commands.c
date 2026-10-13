@@ -5,6 +5,7 @@
 #include "settings.h"
 #include "z2.h"
 #include "state.h"
+#include "macro.h"
 #include "hb_heap.h"
 
 struct command kz_commands[KZ_CMD_MAX] = {
@@ -34,6 +35,8 @@ struct command kz_commands[KZ_CMD_MAX] = {
     {"load position",       COMMAND_PRESS,  command_load_position},
     {"prev position",       COMMAND_PRESS,  command_prev_position},
     {"next position",       COMMAND_PRESS,  command_next_position},
+    {"record macro",        COMMAND_PRESS,  command_record_macro},
+    {"play macro",          COMMAND_PRESS,  command_play_macro},
 };
 
 void command_prev_state(void) {
@@ -79,6 +82,11 @@ void command_load_state(){
     kz_state_hdr_t *state = kz.states[kz.state_slot];
     if(state != NULL) {
         load_state(state);
+        /* continue the macro from where it was when the state was saved */
+        int32_t macro_frame = kz.state_macro_frame[kz.state_slot];
+        if(macro_frame >= 0 && macro_mode() != MACRO_IDLE) {
+            macro_seek(macro_frame);
+        }
 #ifdef WIIVC
         char name[64];
         hmemcpy(name, state->name, 64);
@@ -112,6 +120,7 @@ void command_save_state(){
         state_free(state);
         state = NULL;
         kz.states[kz.state_slot] = NULL;
+        kz.state_macro_frame[kz.state_slot] = -1;
         new_state = save_state_alloc();
     }
 
@@ -128,6 +137,7 @@ void command_save_state(){
     new_state->state_version = STATE_HDR_VERSION;
     memcpy(new_state->name, name, sizeof(name));
     kz.states[kz.state_slot] = new_state;
+    kz.state_macro_frame[kz.state_slot] = macro_mode() != MACRO_IDLE ? (int32_t)macro_frame() : -1;
     kz_log("saved state %d (%s, %dkb)", kz.state_slot, new_state->name, (new_state->size + 1023) / 1024);
 #else
     char *tmp_name = NULL;
@@ -181,7 +191,16 @@ void command_save_state(){
     kz_log("saved state %d (%s)", kz.state_slot, state->name);
 #endif
     kz.states[kz.state_slot] = state;
+    kz.state_macro_frame[kz.state_slot] = macro_mode() != MACRO_IDLE ? (int32_t)macro_frame() : -1;
 #endif
+}
+
+void command_record_macro(void){
+    macro_record();
+}
+
+void command_play_macro(void){
+    macro_play();
 }
 
 void command_timer(void){
