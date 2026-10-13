@@ -78,14 +78,15 @@ static int name_onupdate(event_handler_t *handler, menu_event_t event, void **ev
 }
 
 #ifdef LITE
-static char state_mem_text[32];
+static char state_mem_text[40];
 
 static int state_mem_onupdate(event_handler_t *handler, menu_event_t event, void **event_data) {
     size_t total;
-    mem_largest_free(&total);
+    size_t largest = mem_largest_free(&total);
     kz_state_hdr_t *state = kz.states[kz.state_slot];
     int state_kb = state != NULL ? (state->size + 1023) / 1024 : 0;
-    snprintf(state_mem_text, sizeof(state_mem_text), "size %dkb free %dkb", state_kb, (int)(total / 1024));
+    snprintf(state_mem_text, sizeof(state_mem_text), "size %dkb free %dkb max %dkb",
+             state_kb, (int)(total / 1024), (int)(largest / 1024));
     return 1;
 }
 
