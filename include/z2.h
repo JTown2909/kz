@@ -13,6 +13,16 @@
 #define Z2_SCREEN_WIDTH    320
 #define Z2_SCREEN_HEIGHT   240
 
+/* minigame/event timers (postman, beaver race, moon crash, ...) */
+#define Z2_TIMER_CNT       7
+/* where z2_file keeps them: the osTime the postman timer stopped, each timer's
+   state (0 = off), and the osTime each timer started. */
+#if Z2_VERSION==NZSE
+#define Z2_FILE_POSTMAN_STOP_TIME   0x3DC8
+#define Z2_FILE_TIMER_STATES        0x3DD0
+#define Z2_FILE_TIMER_START_TIMES   0x3E50
+#endif
+
 #ifndef Z2_VERSION
 #error no z2 version specified
 #endif
@@ -1878,6 +1888,10 @@ z2_extern uint64_t                  z2_timer_change_val;
 z2_extern uint8_t                   z2_timer_pause;
 z2_extern uint64_t                  z2_timer_pause_time;
 z2_extern uint8_t                   z2_timer_is_paused;
+/* z2_timer_change_val is the osTime the bottle timers (hot spring water) were paused */
+z2_extern uint8_t                   z2_bottle_timer_is_paused;
+/* per timer osTime when an "alt" counting timer started, then the osTime it has run for */
+z2_extern uint64_t                  z2_timer_alt_times[Z2_TIMER_CNT * 2];
 z2_extern uint8_t                   z2_weather_state;
 
 // pause menu hacks

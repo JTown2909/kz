@@ -10,11 +10,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define STATE_VERSION 8
+#define STATE_VERSION 9
 
-#ifdef LITE
 /* lite states are compressed, so they are versioned apart from full/vc states */
 #define STATE_LITE          0x8000
+#ifdef LITE
 #define STATE_HDR_VERSION   (STATE_VERSION | STATE_LITE)
 #else
 #define STATE_HDR_VERSION   STATE_VERSION

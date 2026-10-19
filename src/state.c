@@ -134,6 +134,27 @@ void relocate_col_hdr(uint32_t hdr){
     zu_segment_reloc(&col_hdr->water);
 }
 
+/*
+ * the game counts timers as osGetTime() minus the osTime they started (minus
+ * time spent paused), so a loaded state's timers would also count the time
+ * since the state was saved.  move their start times forward by that much.
+ */
+static void shift_timers(uint64_t offset){
+#ifdef Z2_FILE_TIMER_STATES
+    char *file = (char*)&z2_file;
+    uint8_t *states = (uint8_t*)(file + Z2_FILE_TIMER_STATES);
+    uint64_t *start_times = (uint64_t*)(file + Z2_FILE_TIMER_START_TIMES);
+    for(int i = 0; i < Z2_TIMER_CNT; i++){
+        if(states[i] != 0){
+            start_times[i] += offset;
+        }
+    }
+    if(states[0] != 0){
+        *(uint64_t*)(file + Z2_FILE_POSTMAN_STOP_TIME) += offset;
+    }
+#endif
+}
+
 void load_state(void *state){
     FORCE_CLEAN(load_state);
 
@@ -144,6 +165,7 @@ void load_state(void *state){
 
     kz_state_hdr_t hdr;
     st_read_raw(&p, &hdr, sizeof(hdr));
+    int version = hdr.state_version & ~STATE_LITE;
 #ifdef LITE
     state_stream_open(&st_in, state, p);
 #endif
@@ -296,6 +318,8 @@ void load_state(void *state){
         }
     }
 
+    shift_timers(offset);
+
 
     /* load static context */
     st_read(&p, z2_file.static_ctx, sizeof(*z2_file.static_ctx));
@@ -436,7 +460,7 @@ void load_state(void *state){
 
     st_read(&p, &z2_quake_request_cnt, sizeof(z2_quake_request_cnt));
 
-    if(hdr.state_version >= 8){
+    if(version >= 8){
         st_read(&p, &z2_camera_wobble_effect, sizeof(z2_camera_wobble_effect));
     }
 
@@ -608,8 +632,14 @@ void load_state(void *state){
 
     st_read(&p, z2_saturation, 0x20);
     st_read(&p, &z2_hide_clock, sizeof(z2_hide_clock));
-    if(hdr.state_version >= 8){
+    if(version >= 8){
         st_read(&p, &z2_weather_state, sizeof(z2_weather_state));
+    }
+    if(version >= 9){
+        st_read(&p, z2_timer_alt_times, sizeof(z2_timer_alt_times));
+        for(int i = 0; i < Z2_TIMER_CNT; i++){
+            z2_timer_alt_times[i] += offset;
+        }
     }
 
     /* create skybox */
@@ -1047,6 +1077,7 @@ size_t save_state(void *state){
     st_write(&p, &z2_hide_clock, sizeof(z2_hide_clock));
 
     st_write(&p, &z2_weather_state, sizeof(z2_weather_state));
+    st_write(&p, z2_timer_alt_times, sizeof(z2_timer_alt_times));
 
     /* save display lists */
     z2_gfx_t *gfx = z2_ctxt.gfx;
@@ -1148,9 +1179,9 @@ struct state_compat {
 
 static struct state_compat compatabilities[] = {
     {
-        .state_version = 8,
+        .state_version = 9,
         .compat_versions = {
-            7, -1
+            8, 7, -1
         }
     }
 };
@@ -1160,11 +1191,20 @@ int state_is_valid(kz_state_hdr_t *state) {
         return -1;
     }
 
+    int version = state->state_version;
 #ifdef LITE
-    return state->state_version == STATE_HDR_VERSION ? 0 : -2;
+    /* lite states start at version 8 */
+    if(!(version & STATE_LITE) || (version & ~STATE_LITE) < 8){
+        return -2;
+    }
+    version &= ~STATE_LITE;
+#else
+    if(version & STATE_LITE){
+        return -2;
+    }
 #endif
 
-    if(state->state_version == STATE_VERSION){
+    if(version == STATE_VERSION){
         return 0;
     }
 
@@ -1180,7 +1220,7 @@ int state_is_valid(kz_state_hdr_t *state) {
                 return -2;
             }
 
-            if(compat->compat_versions[j] == state->state_version){
+            if(compat->compat_versions[j] == version){
                 return 0;
             }
         }
