@@ -1,5 +1,3 @@
-#include <vector/vector.h>
-#include <set/set.h>
 #include <stdlib.h>
 #include <errno.h>
 #include "menu.h"
@@ -26,16 +24,25 @@ static file_mode_t          file_menu_mode;
 static int                  file_menu_extension_len = 0;
 static get_file_callback_t  file_menu_callback = NULL;
 static void                *file_menu_callback_data = NULL;
-static struct set           dir_files;
 static _Bool                file_menu_ready = 0;
 static char                *file_menu_text_value;
 static char                *new_folder_name;
 
+/* where the browser was left, so reopening it returns to the same place */
+static char                *last_dir = NULL;
+static char                *last_name = NULL;
+static int                  last_offset = 0;
+
+/* directory listing. entries only hold a pointer to their name, so large
+   folders fit in kz's small heap (vc and lite run in the same ~270kb). */
 typedef struct {
-    char    name[256];
+    char   *name;
     _Bool   isdir;
-    char    text[32];
 } dir_entry_t;
+
+static dir_entry_t         *dir_files = NULL;
+static int                  dir_file_cnt = 0;
+static int                  dir_file_cap = 0;
 
 static _Bool stricmp(const char *a, const char *b){
     while(*a && *b){
@@ -54,8 +61,46 @@ static _Bool stricmp(const char *a, const char *b){
     return *a == *b;
 }
 
+static void clear_file_list(void){
+    for(int i = 0; i < dir_file_cnt; i++){
+        free(dir_files[i].name);
+    }
+    dir_file_cnt = 0;
+}
+
+static _Bool dir_ent_comp(dir_entry_t *dir_a, dir_entry_t *dir_b);
+
+/* insert in sorted order. returns 0 if out of memory */
+static _Bool add_file(const char *name, _Bool isdir){
+    if(dir_file_cnt == dir_file_cap){
+        int cap = dir_file_cap ? dir_file_cap * 2 : 32;
+        dir_entry_t *files = realloc(dir_files, sizeof(*files) * cap);
+        if(!files){
+            return 0;
+        }
+        dir_files = files;
+        dir_file_cap = cap;
+    }
+    dir_entry_t ent;
+    ent.name = malloc(strlen(name) + 1);
+    if(!ent.name){
+        return 0;
+    }
+    strcpy(ent.name, name);
+    ent.isdir = isdir;
+
+    int i = dir_file_cnt;
+    while(i > 0 && dir_ent_comp(&ent, &dir_files[i - 1])){
+        dir_files[i] = dir_files[i - 1];
+        i--;
+    }
+    dir_files[i] = ent;
+    dir_file_cnt++;
+    return 1;
+}
+
 static _Bool update_file_list(void){
-    vector_clear(&dir_files.container);
+    clear_file_list();
     DIR *dir = opendir(".");
     if(!dir){
         if(errno == ENODEV){
@@ -64,6 +109,7 @@ static _Bool update_file_list(void){
             strcpy(file_menu_location->text, "no filesystem");
         }else{
             strncpy(file_menu_location->text, strerror(errno), 31);
+            file_menu_location->text[31] = 0;
         }
         return 0;
     }
@@ -81,15 +127,10 @@ static _Bool update_file_list(void){
             continue;
         }
 
-        dir_entry_t ent;
-        strcpy(ent.name, dirent->dir_name);
-        ent.isdir = isdir;
-
-        memcpy(ent.text, dirent->dir_name, 32);
-        if(name_len > 31){
-            strcpy(&ent.text[28],"...");
+        if(!add_file(dirent->dir_name, isdir)){
+            kz_log("not enough memory to list all files");
+            break;
         }
-        set_insert(&dir_files,&ent);
     }
     closedir(dir);
 
@@ -114,7 +155,7 @@ static void update_view(void){
         }
         file_menu_up_button->y_cell = y;
         file_menu_down_button->y_cell = y + FILE_ROWS - 1;
-        if(dir_files.container.size > FILE_ROWS){
+        if(dir_file_cnt > FILE_ROWS){
             file_menu_up_button->enabled = 1;
             file_menu_down_button->enabled = 1;
         }else{
@@ -124,7 +165,7 @@ static void update_view(void){
         for(int i = 0; i < FILE_ROWS;i++){
             menu_item_t *item = file_menu_rows[i];
             item->y_cell = y++;
-            if(i < dir_files.container.size){
+            if(i < dir_file_cnt){
                 item->enabled = 1;
             }else{
                 item->enabled = 0;
@@ -143,11 +184,13 @@ static void update_view(void){
     }
 }
 
-static _Bool dir_ent_comp(void *a, void *b){
-    dir_entry_t *dir_a = a;
-    dir_entry_t *dir_b = b;
+/* returns 1 if dir_a sorts before dir_b */
+static _Bool dir_ent_comp(dir_entry_t *dir_a, dir_entry_t *dir_b){
     if(strcmp(dir_a->name, "..") == 0){
         return 1;
+    }
+    if(strcmp(dir_b->name, "..") == 0){
+        return 0;
     }
     if(dir_a->isdir && !dir_b->isdir){
         return 1;
@@ -216,33 +259,114 @@ static _Bool dir_ent_comp(void *a, void *b){
         b_name++;
     }
     d = (a_name - dir_a->name) - (b_name - dir_b->name);
-    if(d < 0){
-        return 1;
+    if(d == 0){
+        /* names that only differ in case or leading zeros, e.g. "a01b" and "a1bc" */
+        d = strcmp(dir_a->name, dir_b->name);
     }
-    else{
+    return d < 0;
+}
+
+#define PATH_MAX_LEN 512
+
+static char *cwd_buf;
+
+static char *str_dup(const char *str){
+    char *ret = malloc(strlen(str) + 1);
+    if(ret){
+        strcpy(ret, str);
+    }
+    return ret;
+}
+
+/* on wii vc, getcwd returns buf even when it fails and leaves it untouched */
+static _Bool get_cwd(char *buf, size_t size){
+    buf[0] = 0;
+    if(getcwd(buf, size) == NULL){
         return 0;
+    }
+    buf[size - 1] = 0;
+    return buf[0] != 0;
+}
+
+/* remember the folder, scroll position and chosen file for next time */
+static void remember_position(const char *name){
+    char *cwd = cwd_buf;
+    if(!get_cwd(cwd, PATH_MAX_LEN)){
+        return;
+    }
+    free(last_dir);
+    free(last_name);
+    last_dir = str_dup(cwd);
+    last_name = name ? str_dup(name) : NULL;
+    last_offset = file_menu_offset;
+}
+
+static void restore_position(void){
+    char *cwd = cwd_buf;
+    if(!last_dir || !get_cwd(cwd, PATH_MAX_LEN) || strcmp(cwd, last_dir) != 0){
+        return;
+    }
+    int max_offset = dir_file_cnt - FILE_ROWS;
+    if(max_offset < 0){
+        max_offset = 0;
+    }
+    file_menu_offset = last_offset > max_offset ? max_offset : last_offset;
+    if(!last_name){
+        return;
+    }
+    for(int i = 0; i < dir_file_cnt; i++){
+        if(strcmp(dir_files[i].name, last_name) == 0){
+            if(i < file_menu_offset){
+                file_menu_offset = i;
+            }else if(i >= file_menu_offset + FILE_ROWS){
+                file_menu_offset = i - FILE_ROWS + 1;
+            }
+            file_menu.selected_item = file_menu_rows[i - file_menu_offset];
+            break;
+        }
     }
 }
 
 static void return_path(char *path){
-    char *ret = malloc(4096);
-    getcwd(ret, 4096); // todo: error checking.
+    char *ret = malloc(PATH_MAX_LEN);
+    if(!ret){
+        kz_log("not enough memory");
+        return;
+    }
+    if(!get_cwd(ret, PATH_MAX_LEN)){
+        kz_log("could not get folder");
+        free(ret);
+        return;
+    }
     int dl = strlen(ret);
     int nl = strlen(path);
-    if(dl + 1 + nl + file_menu_extension_len < 4096){
-        ret[dl] = '/';
-        strcpy(&ret[dl + 1], path);
-        strcpy(&ret[dl + 1 + nl], file_menu_extension);
+    if(dl + 1 + nl + file_menu_extension_len >= PATH_MAX_LEN){
+        kz_log("path too long");
+        free(ret);
+        return;
     }
+    ret[dl] = '/';
+    strcpy(&ret[dl + 1], path);
+    strcpy(&ret[dl + 1 + nl], file_menu_extension);
+    remember_position(&ret[dl + 1]);
     file_menu_callback(ret, file_menu_callback_data);
     menu_trigger_event(&file_menu, MENU_EVENT_RETURN, NULL);
     free(ret);
 }
 
+/* select the first row, so the selection never sits on a row without a file */
+static void select_first_row(void){
+    if(dir_file_cnt > 0){
+        file_menu.selected_item = file_menu_rows[0];
+    }else{
+        file_menu.selected_item = file_menu.items.first;
+    }
+}
+
 static int reset_disk_onactivate(event_handler_t *handler, menu_event_t event, void **event_data){
     reset_disk();
-    update_view();
     file_menu_offset = 0;
+    update_view();
     return 1;
 }
 
@@ -258,15 +382,25 @@ static int clear_onactivate(event_handler_t *handler, menu_event_t event, void *
 
 static int menu_file_onactivate(event_handler_t *handler, menu_event_t event, void **event_data){
     menu_item_t *item = handler->subscriber;
-    int data = (int)item->data;
-    dir_entry_t *dirent = set_at(&dir_files, data + file_menu_offset);
+    int idx = (int)item->data + file_menu_offset;
+    if(idx >= dir_file_cnt){
+        return 1;
+    }
+    dir_entry_t *dirent = &dir_files[idx];
     if(dirent->isdir){
+        /* chdir before update_view frees the name */
         chdir(dirent->name);
-        update_view();
         file_menu_offset = 0;
+        update_view();
+        select_first_row();
+        remember_position(NULL);
     }else{
         int len = strlen(dirent->name) - file_menu_extension_len;
         char *path = malloc(len + 1);
+        if(!path){
+            kz_log("not enough memory");
+            return 1;
+        }
         memcpy(path, dirent->name, len);
         path[len] = 0;
         if(file_menu_mode == FILE_MODE_SAVE){
@@ -282,17 +416,27 @@ static int menu_file_onactivate(event_handler_t *handler, menu_event_t event, vo
 }
 
 static void menu_file_row_draw(menu_item_t *item){
-    dir_entry_t *ent = set_at(&dir_files, (int)item->data + file_menu_offset);
+    int idx = (int)item->data + file_menu_offset;
+    if(idx >= dir_file_cnt){
+        return;
+    }
+    dir_entry_t *ent = &dir_files[idx];
     int x = menu_item_x(item);
     int y = menu_item_y(item);
     int tile = 0;
-    char *text = ent->text;
-    if(strcmp(ent->text, "..") == 0){
+    char text[32];
+    if(strcmp(ent->name, "..") == 0){
         tile = 2;
-        text = "back";
-    }
-    else if(ent->isdir){
-        tile = 1;
+        strcpy(text, "back");
+    }else{
+        if(ent->isdir){
+            tile = 1;
+        }
+        strncpy(text, ent->name, 31);
+        text[31] = 0;
+        if(strlen(ent->name) > 31){
+            strcpy(&text[28], "...");
+        }
     }
     uint32_t color = DEFAULT_COLOR;
     if(item->owner->selected_item == item){
@@ -326,19 +470,21 @@ static int new_folder_event(event_handler_t *handler, menu_event_t event, void *
 
 static int file_menu_up_onactivate(event_handler_t *handler, menu_event_t event, void **event_data){
     if(file_menu_offset == 0){
-        file_menu_offset = dir_files.container.size - FILE_ROWS;
+        file_menu_offset = dir_file_cnt - FILE_ROWS;
     }else{
         file_menu_offset--;
     }
+    remember_position(NULL);
     return 1;
 }
 
 static int file_menu_down_onactivate(event_handler_t *handler, menu_event_t event, void **event_data){
-    if(file_menu_offset >= dir_files.container.size - FILE_ROWS){
+    if(file_menu_offset >= dir_file_cnt - FILE_ROWS){
         file_menu_offset = 0;
     }else{
         file_menu_offset++;
     }
+    remember_position(NULL);
     return 1;
 }
 
@@ -346,7 +492,6 @@ static void menu_file_init(void){
     if(file_menu_ready){
         return;
     }
-    set_init(&dir_files, sizeof(dir_entry_t), dir_ent_comp);
     menu_init(&file_menu, 0, 0);
     file_menu.selected_item = menu_button_add(&file_menu, 0, 0, "return", menu_return, NULL);
     menu_button_add(&file_menu, 0, 1, "reset disk", reset_disk_onactivate, NULL);
@@ -375,6 +520,7 @@ static void menu_file_init(void){
     }
 
     new_folder_name = malloc(256);
+    cwd_buf = malloc(PATH_MAX_LEN);
 
     file_menu_ready = 1;
 }
@@ -398,4 +544,5 @@ void menu_file_get(file_mode_t mode, const char *default_fn, const char *extensi
     void *menu = &file_menu;
     menu_trigger_event(&kz.main_menu, MENU_EVENT_ENTER, &menu);
     update_view();
+    restore_position();
 }
