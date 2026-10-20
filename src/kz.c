@@ -54,6 +54,7 @@ static void kz_main(void) {
     gfx_begin();
 
     input_update();
+    menu_lazy_collect();
 
     // Emergency settings reset, konami code
     {

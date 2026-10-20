@@ -52,6 +52,7 @@ typedef int  (*menu_event_cb_t)(event_handler_t *handler, menu_event_t event, vo
 typedef int  (*menu_item_event_cb_t)(event_handler_t *handler, menu_event_t event, void **event_data);
 typedef void (*menu_item_draw_t)(menu_item_t *item);
 typedef void (*menu_item_remove_t)(menu_item_t *item);
+typedef menu_t *(*menu_ctor_t)(void *data);
 
 struct event_handler_s {
     menu_event_t    event;
@@ -118,6 +119,8 @@ void                menu_init                   (menu_t *menu, int16_t x_offset,
 void                menu_draw                   (menu_t *menu);
 int                 menu_return                 (event_handler_t *handler, menu_event_t event, void **event_data);
 void                menu_item_remove            (menu_item_t *item);
+void                menu_destroy                (menu_t *menu);
+void                menu_lazy_collect           (void);
 
 int                 menu_x(menu_t *menu);
 int                 menu_y(menu_t *menu);
@@ -130,6 +133,7 @@ void                menu_input(menu_t *menu, void **event_data);
 
 menu_item_t        *menu_label_add          (menu_t *menu, uint16_t cell_x, uint16_t cell_y, void *text);
 menu_item_t        *menu_submenu_add        (menu_t *menu, uint16_t cell_x, uint16_t cell_y, char *text, menu_t *submenu);
+menu_item_t        *menu_submenu_lazy_add   (menu_t *menu, uint16_t cell_x, uint16_t cell_y, char *text, menu_ctor_t ctor, void *ctor_data);
 menu_item_t        *menu_checkbox_add       (menu_t *menu, uint16_t cell_x, uint16_t cell_y);
 menu_item_t        *menu_button_add         (menu_t *menu, uint16_t cell_x, uint16_t cell_y, char *text, menu_item_event_cb_t on_activate, void *activate_data);
 menu_item_t        *menu_gfx_button_add     (menu_t *menu, uint16_t cell_x, uint16_t cell_y, menu_sprite_t *sprite, menu_item_event_cb_t on_activate, void *activate_data);
