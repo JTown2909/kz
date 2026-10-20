@@ -541,6 +541,10 @@ void menu_file_get(file_mode_t mode, const char *default_fn, const char *extensi
         strncpy(file_menu_text_value, default_fn, 31);
         file_menu_text_value[31] = 0;
     }
+    /* the folder is forgotten if the card was unmounted (kz-lite frees the sd code when the menu closes) */
+    if(last_dir != NULL){
+        chdir(last_dir);
+    }
     void *menu = &file_menu;
     menu_trigger_event(&kz.main_menu, MENU_EVENT_ENTER, &menu);
     update_view();
