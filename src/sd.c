@@ -407,6 +407,8 @@ char *getcwd(char *buf, size_t size) {
 struct sd_dir {
     FF_DIR      dir;
     dirent_t    dirent;
+    /* FatFs never lists "..", so readdir adds it for anything but the root */
+    _Bool       dotdot;
 };
 
 DIR *opendir(const char *path) {
@@ -424,11 +426,19 @@ DIR *opendir(const char *path) {
         fail(res);
         return NULL;
     }
+    d->dotdot = d->dir.obj.sclust != 0;
     return (DIR*)d;
 }
 
 dirent_t *readdir(DIR *dir) {
     struct sd_dir *d = (struct sd_dir*)dir;
+    if(d->dotdot) {
+        d->dotdot = 0;
+        memset(&d->dirent, 0, sizeof(d->dirent));
+        strcpy(d->dirent.dir_name, "..");
+        d->dirent.mode = fattrib_mode(AM_DIR);
+        return &d->dirent;
+    }
     FILINFO info;
     FRESULT res = f_readdir(&d->dir, &info);
     if(res != FR_OK) {
