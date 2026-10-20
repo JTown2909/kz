@@ -21,6 +21,10 @@
 #define Z2_FILE_POSTMAN_STOP_TIME   0x3DC8
 #define Z2_FILE_TIMER_STATES        0x3DD0
 #define Z2_FILE_TIMER_START_TIMES   0x3E50
+#else
+#define Z2_FILE_POSTMAN_STOP_TIME   0x4080
+#define Z2_FILE_TIMER_STATES        0x4088
+#define Z2_FILE_TIMER_START_TIMES   0x4108
 #endif
 
 #ifndef Z2_VERSION
@@ -504,13 +508,17 @@ typedef struct {
     /* 0x10E0 */ char                unk_0x10E0[0x2BC0];
 #endif
     /* 0x3CA0   0x3F50 */ int32_t             file_index;
-    /* 0x3CA4   0x3F54 */ char                unk_0x3CA4[0x08];
-    /* 0x3CAC   0x3F5C */ uint32_t            scene_setup;
-    /* 0x3CB0   0x3F60 */ int                 void_flag;
+#if Z2_VERSION==NZSE
+    /* 0x3CA4          */ char                unk_0x3CA4[0x08];
+#else
+    /*          0x3F54 */ char                unk_0x3F54[0x0C];
+#endif
+    /* 0x3CAC   0x3F60 */ uint32_t            scene_setup;
+    /* 0x3CB0   0x3F64 */ int                 void_flag;
 #if Z2_VERSION==NZSE
     /* 0x3CB4          */ char                unk_0x03CB4[0x264];
 #else
-    /*          0x3F64 */ char                unk_0x03F64[0x268];
+    /*          0x3F68 */ char                unk_0x03F68[0x264];
     /*          0x41CC */ char                hsw_timer_active[6];
     /*          0x41D2 */ char                unk_0x41D2[0x6];
     /*          0x41D8 */ uint64_t            hsw_catch_start[6];
@@ -1884,12 +1892,11 @@ z2_extern char                      z2_quake_requests[0x90];
 z2_extern char                      z2_camera_wobble_effect[0x24];
 z2_extern int16_t                   z2_quake_request_cnt;
 z2_extern int16_t                   z2_message_static_offsets[];
+/* the osTime the bottle timers (hot spring water) were paused, and whether they are */
 z2_extern uint64_t                  z2_timer_change_val;
 z2_extern uint8_t                   z2_timer_pause;
 z2_extern uint64_t                  z2_timer_pause_time;
 z2_extern uint8_t                   z2_timer_is_paused;
-/* z2_timer_change_val is the osTime the bottle timers (hot spring water) were paused */
-z2_extern uint8_t                   z2_bottle_timer_is_paused;
 /* per timer osTime when an "alt" counting timer started, then the osTime it has run for */
 z2_extern uint64_t                  z2_timer_alt_times[Z2_TIMER_CNT * 2];
 z2_extern uint8_t                   z2_weather_state;

@@ -69,7 +69,6 @@ z2_timer_pause_time         = 0x801BF8E8;
 z2_timer_change_val         = 0x801BF8F0;
 z2_timer_alt_times          = 0x801BF8F8;
 z2_timer_is_paused          = 0x801BF968;
-z2_bottle_timer_is_paused   = 0x801BF969;
 z2_timer_pause              = 0x801BF96C;
 z2_quake_request_cnt        = 0x801C0EC4;
 z2_icon_item_static_table   = 0x801C1E6C;

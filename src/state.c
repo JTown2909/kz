@@ -140,7 +140,6 @@ void relocate_col_hdr(uint32_t hdr){
  * since the state was saved.  move their start times forward by that much.
  */
 static void shift_timers(uint64_t offset){
-#ifdef Z2_FILE_TIMER_STATES
     char *file = (char*)&z2_file;
     uint8_t *states = (uint8_t*)(file + Z2_FILE_TIMER_STATES);
     uint64_t *start_times = (uint64_t*)(file + Z2_FILE_TIMER_START_TIMES);
@@ -152,7 +151,6 @@ static void shift_timers(uint64_t offset){
     if(states[0] != 0){
         *(uint64_t*)(file + Z2_FILE_POSTMAN_STOP_TIME) += offset;
     }
-#endif
 }
 
 void load_state(void *state){

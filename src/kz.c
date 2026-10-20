@@ -732,9 +732,9 @@ static void game_state_main(void) {
             z2_timer_pause_time = osGetTime();
             z2_timer_is_paused = true;
         }
-        if(!z2_bottle_timer_is_paused){
+        if(!z2_timer_pause){
             z2_timer_change_val = osGetTime();
-            z2_bottle_timer_is_paused = true;
+            z2_timer_pause = true;
         }
 
         z2_gfx_t *gfx = z2_game.common.gfx;
