@@ -67,6 +67,7 @@ menu_item_t *menu_switch_add(menu_t *menu, uint16_t x_cell, uint16_t y_cell,
         item->interactive = 1;
         item->tooltip = tooltip;
         item->draw_proc = menu_switch_draw;
+        item->remove_proc = menu_item_free_data;
         menu_item_register_event(item, MENU_EVENT_ACTIVATE, menu_switch_onactivate, NULL);
     }
     return item;

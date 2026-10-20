@@ -114,6 +114,7 @@ menu_item_t *menu_bind_add(menu_t *menu, int x, int y, int cmd){
         item->data = data;
         item->interactive = 1;
         item->draw_proc = bind_draw;
+        item->remove_proc = menu_item_free_data;
         menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, bind_event, NULL);
     }
     return item;

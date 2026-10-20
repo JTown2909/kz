@@ -46,6 +46,11 @@ void menu_destroy(menu_t *menu){
     list_destroy(&menu->items);
     list_destroy(&menu->events);
     list_destroy(&menu->item_events);
+    while(menu->owned != NULL){
+        void **block = menu->owned;
+        menu->owned = block[0];
+        free(block);
+    }
 }
 
 static void lazy_free(struct lazy_submenu *lazy){

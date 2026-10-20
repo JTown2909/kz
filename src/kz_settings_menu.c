@@ -255,106 +255,121 @@ static int memfile_action_onlist(event_handler_t *handler, menu_event_t event, v
     return 1;
 }
 
-menu_t *create_settings_menu(void){
-    static menu_t settingsm;
-    static menu_t commands;
-
-    menu_init(&settingsm, 0, 0);
-    menu_padding_set(&settingsm, 0, 2);
-    settingsm.selected_item = menu_button_add(&settingsm, 0, 0, "return", menu_return, NULL);
-
-    menu_label_add(&settingsm, 0, 1, "profile");
-    menu_button_add(&settingsm, 12, 1, "-", profile_dec_onactivate, NULL);
-    static watch_t profile_watch;
-    profile_watch.address = &kz.settings_profile;
-    profile_watch.type = WATCH_TYPE_U8;
-    profile_watch.floating = 0;
-    menu_watch_add(&settingsm, 13, 1, &profile_watch, 1);
-    menu_button_add(&settingsm, 14, 1, "+", profile_inc_onactivate, NULL);
-    menu_button_add(&settingsm, 0, 2, "save settings", save_profile_onactivate, NULL);
-    menu_button_add(&settingsm, 0, 3, "load settings", load_profile_onactivate, NULL);
-    menu_button_add(&settingsm, 0, 4, "load default settings", default_settings_onactivate, NULL);
-    menu_item_t *item = menu_checkbox_add(&settingsm, 0, 5);
-    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, pause_help_event, NULL);
-    menu_label_add(&settingsm, 2, 5, "display pause help text");
-
-    item = menu_checkbox_add(&settingsm, 0, 6);
-    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_INPUT_DISPLAY);
-    menu_checkbox_set(item, settings->input_display);
-    menu_label_add(&settingsm, 2, 6, "input display");
-    menu_move_button_add(&settingsm, 16, 6, &settings->id_x, &settings->id_y);
-
-    item = menu_checkbox_add(&settingsm, 0, 7);
-    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_TIMER);
-    menu_checkbox_set(item, settings->timer);
-    menu_label_add(&settingsm, 2, 7, "timer");
-    menu_move_button_add(&settingsm, 16, 7, &settings->timer_x, &settings->timer_y);
-
-    item = menu_checkbox_add(&settingsm, 0, 8);
-    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_LAG_COUNTER);
-    menu_checkbox_set(item, settings->lag_counter);
-    menu_label_add(&settingsm, 2, 8, "lag counter");
-    menu_move_button_add(&settingsm, 16, 8, &settings->lag_x, &settings->lag_y);
-
-    item = menu_checkbox_add(&settingsm, 0, 9);
-    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_TURBO);
-    menu_checkbox_set(item, settings->turbo_type);
-    menu_label_add(&settingsm, 2, 9, "turbo hold");
-
-    menu_submenu_add(&settingsm, 0, 10, "commands", &commands);
-
-    // Build commands menu
-    int y = 2;
-    {
-        menu_init(&commands, 0, 0);
-        menu_padding_set(&commands, 0, 1);
-
-        commands.selected_item = menu_button_add(&commands, 0, 0, "return", menu_return, NULL);
-        menu_label_add(&commands, 2, 1, "command");
-        menu_label_add(&commands, 22, 1, "bind");
-
-        menu_gfx_button_add(&commands, 0, 2, scroll_up_sprite, command_dec_onactivate, NULL);
-        menu_gfx_button_add(&commands, 0, 14, scroll_down_sprite,  command_inc_onactivate, NULL);
-
-        for(int i = 0; i < 13; i++){
-            command_bindings[i].command_button = menu_button_add(&commands, 2, y, kz_commands[i].text, command_onactivate, (void*)i);
-            command_bindings[i].command_bind = menu_bind_add(&commands, 22, y++, i);
-        }
+static menu_t *create_commands_menu(void *ctor_data){
+    menu_t *commands = malloc(sizeof(*commands));
+    if(commands == NULL){
+        return NULL;
     }
+    menu_init(commands, 0, 0);
+    int y = 2;
+    menu_padding_set(commands, 0, 1);
 
-    static menu_t settings_page2;
-    menu_init(&settings_page2, 0, 0);
-    menu_padding_set(&settings_page2, 0, 2);
-    settings_page2.selected_item = menu_button_add(&settings_page2, 0, 0, "prev page", menu_return, NULL);
-    menu_submenu_add(&settingsm, 0, 12, "next page", &settings_page2);
+    commands->selected_item = menu_button_add(commands, 0, 0, "return", menu_return, NULL);
+    menu_label_add(commands, 2, 1, "command");
+    menu_label_add(commands, 22, 1, "bind");
 
-    menu_label_add(&settings_page2, 0, 1, "memfile");
-    menu_button_add(&settings_page2, 15, 1, "-", memfile_dec_onactivate, NULL);
+    menu_gfx_button_add(commands, 0, 2, scroll_up_sprite, command_dec_onactivate, NULL);
+    menu_gfx_button_add(commands, 0, 14, scroll_down_sprite,  command_inc_onactivate, NULL);
+
+    for(int i = 0; i < 13; i++){
+        command_bindings[i].command_button = menu_button_add(commands, 2, y, kz_commands[i].text, command_onactivate, (void*)i);
+        command_bindings[i].command_bind = menu_bind_add(commands, 22, y++, i);
+    }
+    /* keep the scroll position from the last time the menu was open */
+    update_commands_table();
+    return commands;
+}
+
+static menu_t *create_settings_page2_menu(void *ctor_data){
+    menu_t *settings_page2 = malloc(sizeof(*settings_page2));
+    if(settings_page2 == NULL){
+        return NULL;
+    }
+    menu_init(settings_page2, 0, 0);
+    menu_item_t *item;
+    int y;
+    menu_padding_set(settings_page2, 0, 2);
+    settings_page2->selected_item = menu_button_add(settings_page2, 0, 0, "prev page", menu_return, NULL);
+
+    menu_label_add(settings_page2, 0, 1, "memfile");
+    menu_button_add(settings_page2, 15, 1, "-", memfile_dec_onactivate, NULL);
     static watch_t memfile_watch;
     memfile_watch.address = &kz.memfile_slot;
     memfile_watch.type = WATCH_TYPE_U8;
     memfile_watch.floating = 0;
-    menu_watch_add(&settings_page2, 16, 1, &memfile_watch, 1);
-    menu_button_add(&settings_page2, 17, 1, "+", memfile_inc_onactivate, NULL);
+    menu_watch_add(settings_page2, 16, 1, &memfile_watch, 1);
+    menu_button_add(settings_page2, 17, 1, "+", memfile_inc_onactivate, NULL);
     y = 2;
-    menu_gfx_button_add(&settings_page2, 0, y, pexport_sprite, export_memfile_onactivate, NULL)->tooltip = "export memfile";
-    menu_gfx_button_add(&settings_page2, 4, y, pimport_sprite, import_memfile_onactivate, NULL)->tooltip = "import memfile";
+    menu_gfx_button_add(settings_page2, 0, y, pexport_sprite, export_memfile_onactivate, NULL)->tooltip = "export memfile";
+    menu_gfx_button_add(settings_page2, 4, y, pimport_sprite, import_memfile_onactivate, NULL)->tooltip = "import memfile";
     y += 2;
 
-    menu_label_add(&settings_page2, 0, y, "memfile action");
-    item = menu_list_add(&settings_page2, 15, y++, memfile_action_text, sizeof(memfile_action_values) / sizeof(*memfile_action_values));
+    menu_label_add(settings_page2, 0, y, "memfile action");
+    item = menu_list_add(settings_page2, 15, y++, memfile_action_text, sizeof(memfile_action_values) / sizeof(*memfile_action_values));
     menu_item_register_event(item, MENU_EVENT_LIST, memfile_action_onlist, NULL);
-    menu_label_add(&settings_page2, 0, y, "saved position");
-    menu_button_add(&settings_page2, 15, y, "-", position_dec_onactivate, NULL);
+    menu_label_add(settings_page2, 0, y, "saved position");
+    menu_button_add(settings_page2, 15, y, "-", position_dec_onactivate, NULL);
     static watch_t position_watch;
     position_watch.address = &kz.pos_slot;
     position_watch.type = WATCH_TYPE_U8;
     position_watch.floating = 0;
-    menu_watch_add(&settings_page2, 16, y, &position_watch, 1);
-    menu_button_add(&settings_page2, 17, y++, "+", position_inc_onactivate, NULL);
+    menu_watch_add(settings_page2, 16, y, &position_watch, 1);
+    menu_button_add(settings_page2, 17, y++, "+", position_inc_onactivate, NULL);
 
-    menu_gfx_button_add(&settings_page2, 0, y, pexport_sprite, export_pos_onactivate, NULL)->tooltip = "export position";
-    menu_gfx_button_add(&settings_page2, 4, y, pimport_sprite, import_pos_onactivate, NULL)->tooltip = "import position";
+    menu_gfx_button_add(settings_page2, 0, y, pexport_sprite, export_pos_onactivate, NULL)->tooltip = "export position";
+    menu_gfx_button_add(settings_page2, 4, y, pimport_sprite, import_pos_onactivate, NULL)->tooltip = "import position";
+    return settings_page2;
+}
 
-    return &settingsm;
+menu_t *create_settings_menu(void *ctor_data){
+    menu_t *settingsm = malloc(sizeof(*settingsm));
+    if(settingsm == NULL){
+        return NULL;
+    }
+    menu_init(settingsm, 0, 0);
+    menu_padding_set(settingsm, 0, 2);
+    settingsm->selected_item = menu_button_add(settingsm, 0, 0, "return", menu_return, NULL);
+
+    menu_label_add(settingsm, 0, 1, "profile");
+    menu_button_add(settingsm, 12, 1, "-", profile_dec_onactivate, NULL);
+    static watch_t profile_watch;
+    profile_watch.address = &kz.settings_profile;
+    profile_watch.type = WATCH_TYPE_U8;
+    profile_watch.floating = 0;
+    menu_watch_add(settingsm, 13, 1, &profile_watch, 1);
+    menu_button_add(settingsm, 14, 1, "+", profile_inc_onactivate, NULL);
+    menu_button_add(settingsm, 0, 2, "save settings", save_profile_onactivate, NULL);
+    menu_button_add(settingsm, 0, 3, "load settings", load_profile_onactivate, NULL);
+    menu_button_add(settingsm, 0, 4, "load default settings", default_settings_onactivate, NULL);
+    menu_item_t *item = menu_checkbox_add(settingsm, 0, 5);
+    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, pause_help_event, NULL);
+    menu_label_add(settingsm, 2, 5, "display pause help text");
+
+    item = menu_checkbox_add(settingsm, 0, 6);
+    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_INPUT_DISPLAY);
+    menu_checkbox_set(item, settings->input_display);
+    menu_label_add(settingsm, 2, 6, "input display");
+    menu_move_button_add(settingsm, 16, 6, &settings->id_x, &settings->id_y);
+
+    item = menu_checkbox_add(settingsm, 0, 7);
+    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_TIMER);
+    menu_checkbox_set(item, settings->timer);
+    menu_label_add(settingsm, 2, 7, "timer");
+    menu_move_button_add(settingsm, 16, 7, &settings->timer_x, &settings->timer_y);
+
+    item = menu_checkbox_add(settingsm, 0, 8);
+    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_LAG_COUNTER);
+    menu_checkbox_set(item, settings->lag_counter);
+    menu_label_add(settingsm, 2, 8, "lag counter");
+    menu_move_button_add(settingsm, 16, 8, &settings->lag_x, &settings->lag_y);
+
+    item = menu_checkbox_add(settingsm, 0, 9);
+    menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_UPDATE, settings_switch_event, (void*)SW_TURBO);
+    menu_checkbox_set(item, settings->turbo_type);
+    menu_label_add(settingsm, 2, 9, "turbo hold");
+
+    menu_submenu_lazy_add(settingsm, 0, 10, "commands", create_commands_menu, NULL);
+    menu_submenu_lazy_add(settingsm, 0, 12, "next page", create_settings_page2_menu, NULL);
+
+    return settingsm;
 }

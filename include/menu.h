@@ -74,7 +74,8 @@ struct menu_s {
     uint16_t            y_padding;          /* 0x0042 */
     uint16_t            cell_width;         /* 0x0044 */
     uint16_t            cell_height;        /* 0x0046 */
-};                                          /* 0x0048 */
+    void               *owned;              /* 0x0048 */
+};                                          /* 0x004C */
 
 struct menu_item_s {
     menu_t             *owner;              /* 0x0000 */
@@ -120,6 +121,8 @@ void                menu_draw                   (menu_t *menu);
 int                 menu_return                 (event_handler_t *handler, menu_event_t event, void **event_data);
 void                menu_item_remove            (menu_item_t *item);
 void                menu_destroy                (menu_t *menu);
+void               *menu_alloc                  (menu_t *menu, size_t size);
+void                menu_item_free_data         (menu_item_t *item);
 void                menu_lazy_collect           (void);
 
 int                 menu_x(menu_t *menu);

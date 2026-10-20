@@ -87,6 +87,25 @@ void menu_init(menu_t *menu, int16_t x_offset, int16_t y_offset)
     menu->y_padding = 0;
     menu->cell_width = DEFAULT_CELL_SIZE;
     menu->cell_height = DEFAULT_CELL_SIZE;
+    menu->owned = NULL;
+}
+
+/* memory that belongs to a menu (e.g. event callback data), freed by menu_destroy */
+void *menu_alloc(menu_t *menu, size_t size)
+{
+    void **block = malloc(sizeof(void*) * 2 + size);
+    if (block == NULL) {
+        return NULL;
+    }
+    block[0] = menu->owned;
+    menu->owned = block;
+    return &block[2];
+}
+
+/* remove_proc for items whose data is a single allocation */
+void menu_item_free_data(menu_item_t *item)
+{
+    free(item->data);
 }
 
 int menu_x(menu_t *menu)

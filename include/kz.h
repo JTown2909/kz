@@ -120,13 +120,13 @@ typedef struct {
 } kz_ctxt_t;
 
 menu_t *create_warps_menu       (void);
-menu_t *create_inventory_menu   (void);
+menu_t *create_inventory_menu   (void *ctor_data);
 menu_t *create_scene_menu       (void);
 menu_t *create_watches_menu     (void);
 menu_t *create_cheats_menu      (void);
 menu_t *create_file_menu        (void);
 menu_t *create_equips_menu      (void);
-menu_t *create_settings_menu    (void);
+menu_t *create_settings_menu    (void *ctor_data);
 menu_t *create_states_menu      (void);
 menu_t *create_macro_menu       (void);
 #ifndef LITE

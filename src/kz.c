@@ -653,14 +653,14 @@ static void init(void) {
     menu_submenu_add(&kz.main_menu, 0, 4, "states", create_states_menu());
     menu_submenu_add(&kz.main_menu, 0, 5, "macro", create_macro_menu());
     menu_submenu_add(&kz.main_menu, 0, Y, "watches", create_watches_menu());
-    menu_submenu_add(&kz.main_menu, 0, Y + 1, "inventory", create_inventory_menu());
+    menu_submenu_lazy_add(&kz.main_menu, 0, Y + 1, "inventory", create_inventory_menu, NULL);
     menu_submenu_add(&kz.main_menu, 0, Y + 2, "equips", create_equips_menu());
     menu_submenu_add(&kz.main_menu, 0, Y + 3, "file", create_file_menu());
 #ifndef LITE
     menu_submenu_add(&kz.main_menu, 0, Y + 4, "debug", create_debug_menu());
-    menu_submenu_add(&kz.main_menu, 0, Y + 5, "settings", create_settings_menu());
+    menu_submenu_lazy_add(&kz.main_menu, 0, Y + 5, "settings", create_settings_menu, NULL);
 #else
-    menu_submenu_add(&kz.main_menu, 0, Y + 4, "settings", create_settings_menu());
+    menu_submenu_lazy_add(&kz.main_menu, 0, Y + 4, "settings", create_settings_menu, NULL);
 #endif
 #undef Y
 

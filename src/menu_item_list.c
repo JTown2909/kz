@@ -396,6 +396,7 @@ menu_item_t *menu_item_list_add(menu_t *menu, uint16_t x_cell, uint16_t y_cell, 
 #endif
         item->data = data;
         item->draw_proc = menu_item_list_draw;
+        item->remove_proc = menu_item_free_data;
         item->interactive = 1;
         item->tooltip = tooltip;
         menu_item_register_event(item, MENU_EVENT_ACTIVATE | MENU_EVENT_NAVIGATE, menu_item_list_event, NULL);
