@@ -13,3 +13,4 @@ vc/obj/
 *.bak
 patch/gsc/kz-*/hooks.gsc
 patch/dol
+release/dist/
