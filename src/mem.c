@@ -71,6 +71,46 @@ static void heap_init(void) {
     heap_initialized = 1;
 }
 
+/* marks free block blk of heap i as used, splitting off what isn't needed */
+static void *take_block(int i, heap_hdr_t *blk, size_t size) {
+    heap_hdr_t *next_free;
+
+    // using sbrk
+    if(blk->heap == HEAP_CNT - 1) {
+        char *need = (char*)blk + HDR_SIZE + size + HDR_SIZE;
+        char *brk = sbrk(0);
+        if(need > brk) {
+            sbrk(need - brk);
+        }
+    }
+
+    if(blk->size - size >= HDR_SIZE + HEAP_ALIGN(1)) {
+        next_free = (heap_hdr_t*)((char*)blk + size + HDR_SIZE);
+        next_free->free = 1;
+        next_free->size = blk->size - size - HDR_SIZE;
+        next_free->next = blk->next;
+        next_free->prev = blk;
+        next_free->heap = blk->heap;
+        if(blk->next != NULL) {
+            blk->next->prev = next_free;
+        }
+        blk->next = next_free;
+        blk->size = size;
+    }
+
+    blk->free = 0;
+
+    if(blk == heap_first_free[i]) {
+        for(next_free = blk->next; next_free != NULL; next_free = next_free->next) {
+            if(next_free->free) {
+                break;
+            }
+        }
+        heap_first_free[i] = next_free;
+    }
+    return (char*)blk + HDR_SIZE;
+}
+
 NOINLINE void *malloc(size_t size) {
     if(!heap_initialized) {
         heap_init();
@@ -82,43 +122,10 @@ NOINLINE void *malloc(size_t size) {
 
     size = HEAP_ALIGN(size);
 
-    heap_hdr_t *blk, *next_free;
-
     for(int i = 0; i < HEAP_CNT; i++) {
-        for(blk = heap_first_free[i]; blk != NULL; blk = blk->next) {
+        for(heap_hdr_t *blk = heap_first_free[i]; blk != NULL; blk = blk->next) {
             if(blk->free && blk->size >= size) {
-                // using sbrk
-                if(blk->heap == HEAP_CNT - 1) {
-                    if((void*)blk >= sbrk(0)) {
-                        sbrk(size + HDR_SIZE + HDR_SIZE);
-                    }
-                }
-
-                if(blk->size - size >= HDR_SIZE + HEAP_ALIGN(1)) {
-                    next_free = (heap_hdr_t*)((char*)blk + size + HDR_SIZE);
-                    next_free->free = 1;
-                    next_free->size = blk->size - size - HDR_SIZE;
-                    next_free->next = blk->next;
-                    next_free->prev = blk;
-                    next_free->heap = blk->heap;
-                    if(blk->next != NULL) {
-                        blk->next->prev = next_free;
-                    }
-                    blk->next = next_free;
-                    blk->size = size;
-                }
-
-                blk->free = 0;
-
-                if(blk == heap_first_free[i]) {
-                    for(next_free = blk->next; next_free != NULL; next_free = next_free->next) {
-                        if(next_free->free) {
-                            break;
-                        }
-                    }
-                    heap_first_free[i] = next_free;
-                }
-                return (char*)blk + HDR_SIZE;
+                return take_block(i, blk, size);
             }
         }
     }
@@ -233,8 +240,6 @@ void *calloc(size_t item_cnt, size_t item_size) {
 }
 
 void *memalign(size_t align, size_t size) {
-    // todo: actually memalign
-
     if(!heap_initialized) {
         heap_init();
     }
@@ -247,52 +252,50 @@ void *memalign(size_t align, size_t size) {
         return NULL;
     }
 
-    size = (size + (align - 1)) & ~(align - 1);
+    /* every block is already aligned this much */
+    if(align <= _Alignof(max_align_t)) {
+        return malloc(size);
+    }
 
-    heap_hdr_t *blk, *next_free;
+    size = HEAP_ALIGN(size);
 
     for(int i = 0; i < HEAP_CNT; i++) {
-        for(blk = heap_first_free[i]; blk != NULL; blk = blk->next) {
-            uint32_t blk_addr = (uint32_t)blk + HDR_SIZE;
-            uint32_t align_pad = ((blk_addr + (align - 1)) & ~(align - 1)) - blk_addr;
-            if(blk->free && blk->size >= size + align_pad) {
-                size += align_pad;
-                if(blk->heap == HEAP_CNT - 1) {
-                    if((void*)blk >= sbrk(0)) {
-                        sbrk(size + HDR_SIZE + HDR_SIZE);
-                    }
-                }
-
-                if(blk->size - size >= HDR_SIZE + HEAP_ALIGN(1)) {
-                    next_free = (heap_hdr_t*)((char*)blk + size + HDR_SIZE);
-                    next_free->free = 1;
-                    next_free->size = blk->size - size - HDR_SIZE;
-                    next_free->next = blk->next;
-                    next_free->prev = blk;
-                    next_free->heap = blk->heap;
-                    if(blk->next != NULL) {
-                        blk->next->prev = next_free;
-                    }
-                    blk->next = next_free;
-                    blk->size = size;
-                }
-
-                blk->free = 0;
-
-                if(blk == heap_first_free[i]) {
-                    for(next_free = blk->next; next_free != NULL; next_free = next_free->next) {
-                        if(next_free->free) {
-                            break;
-                        }
-                    }
-                    heap_first_free[i] = next_free;
-                }
-                return (char*)blk +align_pad +  HDR_SIZE;
+        for(heap_hdr_t *blk = heap_first_free[i]; blk != NULL; blk = blk->next) {
+            if(!blk->free) {
+                continue;
             }
+            /*
+             * free() finds a block's header right before it, so the padding
+             * in front of an aligned block becomes a free block of its own,
+             * and must be big enough to be one.
+             */
+            uintptr_t addr = (uintptr_t)blk + HDR_SIZE;
+            uintptr_t pad = ((addr + align - 1) & ~(align - 1)) - addr;
+            while(pad != 0 && pad < HDR_SIZE + HEAP_ALIGN(1)) {
+                pad += align;
+            }
+            if(blk->size < size + pad) {
+                continue;
+            }
+            if(pad != 0) {
+                heap_hdr_t *aligned = (heap_hdr_t*)((char*)blk + pad);
+                aligned->free = 1;
+                aligned->heap = blk->heap;
+                aligned->size = blk->size - pad;
+                aligned->prev = blk;
+                aligned->next = blk->next;
+                if(blk->next != NULL) {
+                    blk->next->prev = aligned;
+                }
+                blk->next = aligned;
+                blk->size = pad - HDR_SIZE;
+                blk = aligned;
+            }
+            return take_block(i, blk, size);
         }
     }
 
-    return malloc(size);
+    return NULL;
 }
 
 size_t mem_largest_free(size_t *total) {
