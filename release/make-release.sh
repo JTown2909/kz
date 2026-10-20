@@ -6,7 +6,7 @@
 #
 # <tools dir> holds gru, gru.exe, gzinject and gzinject.exe (see
 # build-gru.sh and build-gzinject.sh). Needs glankk's n64 toolchain and a
-# powerpc-eabi toolchain in PATH to build kz and homeboy.
+# powerpc-eabi toolchain in PATH to build kz and homeboy, and python3.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 tools=$(cd "$1" && pwd); version="${2:-4}"
@@ -41,6 +41,7 @@ for v in NZSE NZSJ NZSJ10; do
         d="$pkg/data/kz-$m-$v"
         mkdir -p "$d"
         cp "bin/kz-$m-$v/kz.bin" "patch/gsc/kz-$m-$v/hooks.gsc" "patch/gsc/kz-$m-$v/ups_size_patch.gsc" "$d/"
+        if [ -f "bin/kz-$m-$v/kz-ovl.bin" ]; then cp "bin/kz-$m-$v/kz-ovl.bin" "$d/"; fi
     done
 done
 cp patch/gsc/zero_patch_lite.gsc patch/gsc/zero_patch_vc.gsc "$pkg/data/"

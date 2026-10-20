@@ -83,6 +83,13 @@ print("Inserting payload")
 patched_rom:write(0x1000, ldr)
 patched_rom:write(payload_rom, prev_ldr)
 patched_rom:write(payload_rom + 0x60, kz)
+-- kz-lite's overlays (include/ovl.h) are kept in rom right after kz, which finds them there
+local ovl_file = io.open("bin/" .. kz_version .. "/kz-ovl.bin", "rb")
+if ovl_file ~= nil then
+    ovl_file:close()
+    local ovl = gru.blob_load("bin/" .. kz_version .. "/kz-ovl.bin")
+    patched_rom:write(payload_rom + 0x60 + ((kz:size() + 15) & ~15), ovl)
+end
 patched_rom:crc_update()
 
 return patched_rom, rom, rom_info, kz_version

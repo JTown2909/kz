@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <math.h>
 #include "kz.h"
+#include "ovl.h"
 #include "collision_view.h"
 #include "scenes.h"
 #include "commands.h"
@@ -55,6 +56,9 @@ static void kz_main(void) {
 
     input_update();
     menu_lazy_collect();
+#ifdef LITE
+    ovl_collect();
+#endif
 
     // Emergency settings reset, konami code
     {

@@ -3,6 +3,7 @@ osSendMesg                  = 0x80088AB0;
 osRecvMesg                  = 0x80088E70;
 osEPiStartDma               = 0x8008FDD0;
 osCreateMesgQueue           = 0x800901E0;
+z2_DmaRomToRam              = 0x80080790;
 osGetTime                   = 0x800913C0;
 osEPiReadIo                 = 0x80093050;
 osEPiWriteIo                = 0x80094B70;

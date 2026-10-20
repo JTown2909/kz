@@ -12,6 +12,9 @@ kz requires [libundermine-f3dex2](https://github.com/krimtonz/libundermine) This
 
 To build the libunderime-f3dex2 submodule run `make libum`
 
+## python3
+kz-lite keeps some of its code in rom as overlays (see `include/ovl.h`); `tools/mkovl.py` builds them and needs python 3.
+
 ## gzinject
 In order to create a Wii Virtual Console WAD you will need [gzinject](https://github.com/krimtonz/gzinject)
 

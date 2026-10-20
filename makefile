@@ -92,7 +92,7 @@ HOOKSDIR-$(1)       = patch/$(1)
 RESDIR-$(1)         = $(6)
 NAME-$(1)           = $(1)
 ADDRESS-$(1)        = $(4)
-CSRC-$(1)          := $$(foreach s,$$(CFILES),$$(wildcard $$(SRCDIR-$(1))/$$(s)))
+CSRC-$(1)          := $$(filter-out $$(EXCLUDE-$(1)),$$(foreach s,$$(CFILES),$$(wildcard $$(SRCDIR-$(1))/$$(s))))
 COBJ-$(1)           = $$(patsubst $$(SRCDIR-$(1))/%,$$(OBJDIR-$(1))/%.o,$$(CSRC-$(1)))
 SSRC-$(1)          := $$(foreach s,$$(SFILES),$$(wildcard $$(SRCDIR-$(1))/$$(s)))
 SOBJ-$(1)           = $$(patsubst $$(SRCDIR-$(1))/%,$$(OBJDIR-$(1))/%.o,$$(SSRC-$(1)))
@@ -150,6 +150,13 @@ $$(HOMEBOY-$(1))    : $$(VCDIR-$(1))
 	cp $(HOMEBOYDIR)/bin/hb-$(3)/homeboy.bin $$@
 endef
 
+# kz-lite overlays: code kept in rom and loaded only while it's used (include/ovl.h).
+# the order matches the OVL_* ids.
+OVL_NAMES           = sd state
+OVLSRC-sd           = src/ff.c src/ffunicode.c src/libcart.c src/sd.c src/ovl/sd_api.c
+OVLSRC-state        = src/state.c src/state_lz.c src/ovl/state_api.c
+$(foreach v,$(KZ_VERSIONS),$(eval EXCLUDE-kz-lite-$(v) = $(OVLSRC-sd) $(OVLSRC-state)))
+
 $(foreach v,$(KZ_VERSIONS),$(eval $(call bin_template,kz-vc-$(v),$(v),kz,$(ADDRESS_VC),src,res)))
 $(foreach v,$(KZ_VERSIONS),$(eval $(call bin_template,kz-lite-$(v),$(v),kz,$(ADDRESS_LITE),src,res,lite)))
 $(foreach v,$(KZ_VERSIONS),$(eval $(call bin_template,kz-full-$(v),$(v),kz,$(ADDRESS_FULL),src,res)))
@@ -157,6 +164,34 @@ $(foreach v,$(KZ_VERSIONS),$(eval $(call bin_template,ldr-kz-vc-$(v),$(v),ldr,$(
 $(foreach v,$(KZ_VERSIONS),$(eval $(call bin_template,ldr-kz-lite-$(v),$(v),ldr,$(ADDRESS_LDR),ldr,ldr/res)))
 $(foreach v,$(KZ_VERSIONS),$(eval $(call bin_template,ldr-kz-full-$(v),$(v),ldr,$(ADDRESS_LDR),ldr,ldr/res)))
 $(foreach v,$(VC_VERSIONS),$(eval $(call vc_template,kz-vc-$(v),kz-vc,$(v))))
+
+# $(1) = kz-lite-<version>, $(2) = <version>, $(3) = overlay name
+define ovl_template
+OVLOBJ-$(1)-$(3)    = $$(patsubst src/%,obj/$(1)/ovl-$(3)/%.o,$$(OVLSRC-$(3)))
+$$(OVLOBJ-$(1)-$(3)):   obj/$(1)/ovl-$(3)/%.o: src/%
+	mkdir -p $$(dir $$@)
+	$(CC) $$(ALL_CPPFLAGS) -DZ2_VERSION=$(2) -DLITE -DKZ_VERSION=KZ_LITE -DKZ_OVERLAY $$(ALL_CFLAGS) -Os -G 0 $$< -o $$@
+bin/$(1)/ovl-$(3)-syms.ld: $$(ELF-$(1)) $$(OVLOBJ-$(1)-$(3)) tools/mkovl.py
+	tools/mkovl.py syms $$< $$@ $$(OVLOBJ-$(1)-$(3))
+bin/$(1)/ovl-$(3).elf:  $$(OVLOBJ-$(1)-$(3)) bin/$(1)/ovl-$(3)-syms.ld ovl.ld
+	$(LD) -T ovl.ld bin/$(1)/ovl-$(3)-syms.ld -nostartfiles -specs=nosys.specs -Wl,--emit-relocs -Wl,--gc-sections -L$(LIBDIR) $$(OVLOBJ-$(1)-$(3)) -l$(2) -o $$@
+bin/$(1)/ovl-$(3).ovl:  bin/$(1)/ovl-$(3).elf tools/mkovl.py
+	tools/mkovl.py ovl $$< $$@
+-include $$(OVLOBJ-$(1)-$(3):.o=.d)
+endef
+
+# $(1) = kz-lite-<version>
+define ovl_pack_template
+bin/$(1)/ovl-keep.ld:   $$(foreach o,$(OVL_NAMES),$$(OVLOBJ-$(1)-$$(o))) tools/mkovl.py | bin/$(1)
+	tools/mkovl.py keep $$@ $$(subst |,--,$$(foreach o,$(OVL_NAMES),$$(OVLOBJ-$(1)-$$(o)) |))
+$$(ELF-$(1))        :   bin/$(1)/ovl-keep.ld
+bin/$(1)/kz-ovl.bin :   $$(foreach o,$(OVL_NAMES),bin/$(1)/ovl-$$(o).ovl)
+	tools/mkovl.py pack $$@ $$^
+$(1)                :   bin/$(1)/kz-ovl.bin
+endef
+
+$(foreach v,$(KZ_VERSIONS),$(foreach o,$(OVL_NAMES),$(eval $(call ovl_template,kz-lite-$(v),$(v),$(o)))))
+$(foreach v,$(KZ_VERSIONS),$(eval $(call ovl_pack_template,kz-lite-$(v))))
 
 $(KZ-NZSE)          :   CPPFLAGS    ?=	-DZ2_VERSION=NZSE
 $(KZ-NZSE)          :   LIBS	    :=	-lNZSE

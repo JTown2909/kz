@@ -238,7 +238,8 @@ static int sd_mount(void) {
     return 0;
 }
 
-int reset_disk(void) {
+/* closes any open files and unmounts the card, so the sd overlay can be freed */
+void sd_shutdown(void) {
     for(int i = 0; i < SD_FILE_MAX; i++) {
         if(sd_files[i] != NULL) {
             f_close(sd_files[i]);
@@ -251,6 +252,10 @@ int reset_disk(void) {
         free(sd_fs);
         sd_fs = NULL;
     }
+}
+
+int reset_disk(void) {
+    sd_shutdown();
     card_status = STA_NOINIT;
     return sd_mount();
 }

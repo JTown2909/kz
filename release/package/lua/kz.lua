@@ -95,6 +95,12 @@ function kz_patch(rom, mode)
     patched_rom:write(0x1000, ldr)
     patched_rom:write(payload_rom, prev_ldr)
     patched_rom:write(payload_rom + 0x60, kz)
+    -- kz-lite's overlays are kept in rom right after kz, which finds them there
+    local ovl_file = io.open(data .. "kz-ovl.bin", "rb")
+    if ovl_file ~= nil then
+        ovl_file:close()
+        patched_rom:write(payload_rom + 0x60 + ((kz:size() + 15) & ~15), gru.blob_load(data .. "kz-ovl.bin"))
+    end
     patched_rom:crc_update()
 
     return patched_rom, rom_info, kz_version

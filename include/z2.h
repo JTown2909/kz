@@ -1819,6 +1819,8 @@ z2_extern void          z2_AudioReset               (uint8_t cfg);
 z2_extern void          z2_StopSfx                  (void);
 z2_extern void          z2_AfxCmdFlush              (void);
 z2_extern uint64_t      osGetTime                   (void);
+/* copies size bytes from cartridge offset rom to ram (DmaMgr_DmaRomToRam), returns 0 on success */
+z2_extern int32_t       z2_DmaRomToRam              (uint32_t rom, void *ram, uint32_t size);
 
 /* data */
 z2_extern int32_t                   z2_vi_counter;
