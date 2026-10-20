@@ -13,20 +13,6 @@
 #define Z2_SCREEN_WIDTH    320
 #define Z2_SCREEN_HEIGHT   240
 
-/* minigame/event timers (postman, beaver race, moon crash, ...) */
-#define Z2_TIMER_CNT       7
-/* where z2_file keeps them: the osTime the postman timer stopped, each timer's
-   state (0 = off), and the osTime each timer started. */
-#if Z2_VERSION==NZSE
-#define Z2_FILE_POSTMAN_STOP_TIME   0x3DC8
-#define Z2_FILE_TIMER_STATES        0x3DD0
-#define Z2_FILE_TIMER_START_TIMES   0x3E50
-#else
-#define Z2_FILE_POSTMAN_STOP_TIME   0x4080
-#define Z2_FILE_TIMER_STATES        0x4088
-#define Z2_FILE_TIMER_START_TIMES   0x4108
-#endif
-
 #ifndef Z2_VERSION
 #error no z2 version specified
 #endif
@@ -44,6 +30,20 @@ typedef union {
     };
     /* 0x0000 */ uint32_t color; /* 0x00 */
 } z2_rgba32_t; // size = 0x4
+
+/* minigame/event timers (postman, beaver race, moon crash, ...) */
+#define Z2_TIMER_CNT       7
+/* where z2_file keeps them: the osTime the postman timer stopped, each timer's
+   state (0 = off), and the osTime each timer started. */
+#if Z2_VERSION==NZSE
+#define Z2_FILE_POSTMAN_STOP_TIME   0x3DC8
+#define Z2_FILE_TIMER_STATES        0x3DD0
+#define Z2_FILE_TIMER_START_TIMES   0x3E50
+#else
+#define Z2_FILE_POSTMAN_STOP_TIME   0x4080
+#define Z2_FILE_TIMER_STATES        0x4088
+#define Z2_FILE_TIMER_START_TIMES   0x4108
+#endif
 
 typedef struct
 {
