@@ -67,7 +67,8 @@ local kz = gru.blob_load("bin/" .. kz_version .. "/kz.bin")
 local payload_rom = fs:prom_tail()
 
 print("Building Loader")
-local _,_,res = os.execute(string.format("make CPPFLAGS='-DROM=0x%08x -DRAM=0x%08x -DSIZE=0x%08x'" ..
+-- -B: the loader has kz's size built in, and make can't tell that it changed
+local _,_,res = os.execute(string.format("make -B CPPFLAGS='-DROM=0x%08x -DRAM=0x%08x -DSIZE=0x%08x'" ..
                                          " ldr-" .. kz_version, 
                                          payload_rom,
                                          ram,
