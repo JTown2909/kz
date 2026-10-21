@@ -166,8 +166,9 @@ static void do_export_state(char *path, void *data){
     if(file != -1){
         kz_state_hdr_t *state = kz.states[kz.state_slot];
 
+        /* size counts the header too */
         write(file, state, sizeof(*state));
-        write(file, (char*)state + sizeof(*state), state->size);
+        write(file, (char*)state + sizeof(*state), state->size - sizeof(*state));
         kz_log("export from state %d", kz.state_slot);
         close(file);
     }
