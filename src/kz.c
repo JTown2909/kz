@@ -5,6 +5,7 @@
 #include <math.h>
 #include "kz.h"
 #include "ovl.h"
+#include "timers.h"
 #include "collision_view.h"
 #include "scenes.h"
 #include "commands.h"
@@ -727,21 +728,14 @@ void kz_log(const char *format, ...) {
 }
 
 static void game_state_main(void) {
+    /* time the game doesn't run for while kz is paused doesn't count for its timers */
+    timers_frame(kz.pending_frames == 0);
     if(kz.pending_frames != 0) {
         if(kz.pending_frames > 0) {
             kz.pending_frames--;
         }
         kz_exit(z2_ctxt.gamestate_update, &z2_ctxt);
     } else {
-        if(!z2_timer_is_paused){
-            z2_timer_pause_time = osGetTime();
-            z2_timer_is_paused = true;
-        }
-        if(!z2_timer_pause){
-            z2_timer_change_val = osGetTime();
-            z2_timer_pause = true;
-        }
-
         z2_gfx_t *gfx = z2_game.common.gfx;
         if(z2_ctxt.gamestate_frames != 1) {
             if(gfx->frame_cnt_1 & 1) {

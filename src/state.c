@@ -6,6 +6,7 @@
 #include "zu.h"
 #include "kzresource.h"
 #include "kz.h"
+#include "timers.h"
 #include "audio.h"
 #include "vc.h"
 #ifdef LITE
@@ -132,25 +133,6 @@ void relocate_col_hdr(uint32_t hdr){
     zu_segment_reloc(&col_hdr->type);
     zu_segment_reloc(&col_hdr->camera);
     zu_segment_reloc(&col_hdr->water);
-}
-
-/*
- * the game counts timers as osGetTime() minus the osTime they started (minus
- * time spent paused), so a loaded state's timers would also count the time
- * since the state was saved.  move their start times forward by that much.
- */
-static void shift_timers(uint64_t offset){
-    char *file = (char*)&z2_file;
-    uint8_t *states = (uint8_t*)(file + Z2_FILE_TIMER_STATES);
-    uint64_t *start_times = (uint64_t*)(file + Z2_FILE_TIMER_START_TIMES);
-    for(int i = 0; i < Z2_TIMER_CNT; i++){
-        if(states[i] != 0){
-            start_times[i] += offset;
-        }
-    }
-    if(states[0] != 0){
-        *(uint64_t*)(file + Z2_FILE_POSTMAN_STOP_TIME) += offset;
-    }
 }
 
 void load_state(void *state){
@@ -306,17 +288,6 @@ void load_state(void *state){
     st_read(&p, &z2_timer_change_val, sizeof(z2_timer_change_val));
 
     st_read(&p, &z2_timer_pause, sizeof(z2_timer_pause));
-
-    z2_timer_change_val += offset;
-
-    for(int i = 0; i < 6; i++) {
-        if(z2_file.hsw_timer_active[i]) {
-            z2_file.hsw_catch_start[i] += offset;
-            //z2_file.hsw_offset[i] += offset;
-        }
-    }
-
-    shift_timers(offset);
 
 
     /* load static context */
@@ -635,10 +606,21 @@ void load_state(void *state){
     }
     if(version >= 9){
         st_read(&p, z2_timer_alt_times, sizeof(z2_timer_alt_times));
-        for(int i = 0; i < Z2_TIMER_CNT; i++){
-            z2_timer_alt_times[i] += offset;
-        }
     }
+    if(version >= 10){
+        st_read(&p, &z2_timer_pause_time, sizeof(z2_timer_pause_time));
+        st_read(&p, &z2_timer_is_paused, sizeof(z2_timer_is_paused));
+    }else{
+        /* older states don't have it; a pause in progress starts now */
+        z2_timer_pause_time = load_time;
+    }
+    /*
+     * the game counts timers as osGetTime() minus the osTime they started
+     * (minus time spent paused), so the loaded timers would also count the
+     * time since the state was saved.  move their osTimes forward by that much.
+     */
+    timers_shift(offset);
+    timers_frame_time = load_time;
 
     /* create skybox */
     if(orig_skybox_id > 0){
@@ -856,6 +838,9 @@ size_t save_state(void *state){
     int ent_end = -1;
 
     st_skip(&p, sizeof(kz_state_hdr_t));
+
+    /* while kz is paused, take the paused time out of the timers before saving them */
+    timers_frame(kz.pending_frames == 0);
 
     uint64_t cur_time = osGetTime();
 
@@ -1076,6 +1061,8 @@ size_t save_state(void *state){
 
     st_write(&p, &z2_weather_state, sizeof(z2_weather_state));
     st_write(&p, z2_timer_alt_times, sizeof(z2_timer_alt_times));
+    st_write(&p, &z2_timer_pause_time, sizeof(z2_timer_pause_time));
+    st_write(&p, &z2_timer_is_paused, sizeof(z2_timer_is_paused));
 
     /* save display lists */
     z2_gfx_t *gfx = z2_ctxt.gfx;
@@ -1177,9 +1164,9 @@ struct state_compat {
 
 static struct state_compat compatabilities[] = {
     {
-        .state_version = 9,
+        .state_version = 10,
         .compat_versions = {
-            8, 7, -1
+            9, 8, 7, -1
         }
     }
 };

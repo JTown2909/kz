@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define STATE_VERSION 9
+#define STATE_VERSION 10
 
 /* lite states are compressed, so they are versioned apart from full/vc states */
 #define STATE_LITE          0x8000
