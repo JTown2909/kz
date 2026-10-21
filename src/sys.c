@@ -91,7 +91,7 @@ typedef struct {
     };
 } hb_fat_regs_t;
 
-#define hb_fat ((volatile hb_fat_regs_t*)0xA9058000)
+#define hb_fat ((volatile hb_fat_regs_t*)0xA9060000)
 
 typedef struct {
     void *dir;
@@ -105,7 +105,7 @@ void __assert_func(const char *file, int line, const char *func, const char *fai
 }
 
 int open(const char *path, int open_flags, ...) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->open.path = path;
     hb_fat->open.open_flags = open_flags;
@@ -150,7 +150,7 @@ DIR *opendir(const char *dir) {
 }
 
 int closedir(DIR *dir) {
-    volatile int ret;
+    volatile int ret = -1;
     opendir_t *dir_desc = (opendir_t*)dir;
 
     hb_fat->close_dir.dir = dir_desc->dir;
@@ -167,7 +167,7 @@ int closedir(DIR *dir) {
 }
 
 dirent_t *readdir(DIR *dir) {
-    volatile int ret;
+    volatile int ret = 0;
     opendir_t *dir_desc = (opendir_t*)dir;
 
     hb_fat->read_dir.dir = dir_desc->dir;
@@ -187,7 +187,7 @@ dirent_t *readdir(DIR *dir) {
 }
 
 int write(int file, void *buf, uint32_t byte_cnt) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->write.fd = file;
     hb_fat->write.buf = buf;
@@ -203,7 +203,7 @@ int write(int file, void *buf, uint32_t byte_cnt) {
 }
 
 int read(int file, void *buf, uint32_t byte_cnt) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->read.fd = file;
     hb_fat->read.buf = buf;
@@ -219,7 +219,7 @@ int read(int file, void *buf, uint32_t byte_cnt) {
 }
 
 int close(int file) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->close.fd = file;
     hb_fat->n64_buffer = &ret;
@@ -245,7 +245,7 @@ char *getcwd(char *buf, size_t size) {
 }
 
 int stat(const char *path, struct stat *buf) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->stat.path = path;
     hb_fat->stat.stat = buf;
@@ -260,7 +260,7 @@ int stat(const char *path, struct stat *buf) {
 }
 
 int chdir(const char *path) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->chdir.path =path;
     hb_fat->n64_buffer = &ret;
@@ -274,7 +274,7 @@ int chdir(const char *path) {
 }
 
 int mkdir(const char *path, mode_t mode) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->mkdir.path = path;
     hb_fat->mkdir.mode = mode;
@@ -289,7 +289,7 @@ int mkdir(const char *path, mode_t mode) {
 }
 
 int reset_disk(void) {
-    volatile int ret;
+    volatile int ret = -1;
 
     hb_fat->command = SYS_RESET;
     hb_fat->n64_buffer = &ret;
