@@ -728,8 +728,8 @@ void kz_log(const char *format, ...) {
 }
 
 static void game_state_main(void) {
-    /* time the game doesn't run for while kz is paused doesn't count for its timers */
-    timers_frame(kz.pending_frames == 0);
+    /* while kz is paused, timers only count the frames that are advanced */
+    timers_frame(kz.pending_frames < 0 ? -1 : kz.pending_frames > 0);
     if(kz.pending_frames != 0) {
         if(kz.pending_frames > 0) {
             kz.pending_frames--;

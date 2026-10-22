@@ -1,4 +1,6 @@
+#include <startup.h>
 #include "timers.h"
+#include "kz.h"
 #include "z2.h"
 
 uint64_t timers_frame_time = 0;
@@ -29,10 +31,33 @@ void timers_shift(uint64_t offset){
     z2_timer_change_val += offset;
 }
 
-void timers_frame(_Bool paused){
+/* osTime counts at 46.875MHz, a game frame is update_rate retraces of 1/60s */
+#define TIMERS_RETRACE_TICKS (46875000 / 60)
+
+void timers_frame(int frames){
     uint64_t now = osGetTime();
-    if(paused && timers_frame_time != 0){
-        timers_shift(now - timers_frame_time);
+    if(frames >= 0 && timers_frame_time != 0){
+        int rate = 3;
+        if(z2_file.static_ctx && z2_file.static_ctx->update_rate > 0){
+            rate = z2_file.static_ctx->update_rate;
+        }
+        uint64_t counted = (uint64_t)frames * rate * TIMERS_RETRACE_TICKS;
+        /* may wrap below zero when a frame was quicker than a game frame, which moves the timers on instead */
+        timers_shift(now - timers_frame_time - counted);
     }
     timers_frame_time = now;
+}
+
+/*
+ * the game's timer code (Interface_*: drawing and updating the minigame,
+ * postman and bottle timers, and the postman's A press callback) calls this
+ * instead of osGetTime().  while kz is paused or advancing frames it reads the
+ * time the frame started, so the timers show the same value every time no
+ * matter how long into the frame they're looked at.
+ */
+HOOK uint64_t timers_os_time(void){
+    if(kz.pending_frames < 0 || timers_frame_time == 0){
+        return osGetTime();
+    }
+    return timers_frame_time;
 }

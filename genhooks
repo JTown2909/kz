@@ -43,6 +43,12 @@ genhook "$sym_z2_draw_room_1_hook" "jal $sym_draw_room_hook;"
 genhook "$sym_z2_draw_room_2_hook" "jal $sym_draw_room_hook;"
 genhook "$sym_z2_camera_update_hook" "jal $sym_camera_hook;"
 
+# the timer code's osGetTime() calls
+for i in $(seq 0 17); do
+	eval addr="\$sym_z2_timer_clock_hook_$i"
+	genhook "$addr" "jal $sym_timers_os_time;"
+done
+
 if [ "$2" == "lite" ]; then
 	genhook "$sym_z2_set_heap" "la \$t8, 0x80700000;"
 fi

@@ -840,7 +840,7 @@ size_t save_state(void *state){
     st_skip(&p, sizeof(kz_state_hdr_t));
 
     /* while kz is paused, take the paused time out of the timers before saving them */
-    timers_frame(kz.pending_frames == 0);
+    timers_frame(kz.pending_frames < 0 ? -1 : 0);
 
     uint64_t cur_time = osGetTime();
 

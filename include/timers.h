@@ -18,7 +18,15 @@ extern uint64_t timers_frame_time;
 /* moves every running timer's osTimes forward by offset */
 void timers_shift(uint64_t offset);
 
-/* called once per frame; while kz is paused, the frame's time is taken out */
-void timers_frame(_Bool paused);
+/*
+* takes out of the timers the time since the last call that the game didn't
+* run for.  frames < 0 counts all of it (kz isn't paused), otherwise exactly
+* that many game frames are counted, so frame advance moves the timers by the
+* same amount every time, however long each frame really took.
+*/
+void timers_frame(int frames);
+
+/* osGetTime() for the game's timer code, stopped while kz is paused */
+uint64_t timers_os_time(void);
 
 #endif
