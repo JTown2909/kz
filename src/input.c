@@ -100,12 +100,23 @@ uint16_t make_bind(int len, ...){
 }
 
 void input_update(void){
-    uint16_t z_pad = z2_input_direct.raw.pad;
-    stick_x = z2_input_direct.raw.x;
-    stick_y = z2_input_direct.raw.y;
-    pressed_raw = (pad_cur ^ z_pad) & z_pad;
+    volatile z2_input_t *direct = &z2_input_direct;
+    uint16_t z_pad = direct->raw.pad;
+    stick_x = direct->raw.x;
+    stick_y = direct->raw.y;
+    /*
+     * the game gathers presses from every retrace until it reads them.  while
+     * kz is paused frames can take several retraces (on Wii VC especially), so
+     * a quick tap may be over before kz looks at the pad; take it from there,
+     * as if it was still held this frame.
+     */
+    static uint16_t gathered = 0;
+    uint16_t now_gathered = direct->pad_pressed;
+    uint16_t tapped = now_gathered & ~gathered & ~z_pad;
+    gathered = now_gathered;
+    pressed_raw = ((pad_cur ^ z_pad) & z_pad) | tapped;
     released = (pad_cur ^ z_pad) & ~z_pad;
-    pad_cur = z_pad;
+    pad_cur = z_pad | tapped;
     pressed = 0;
     for(int i = 0;i < 16;i++){
         uint16_t p = 1 << i;
