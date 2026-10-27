@@ -57,6 +57,7 @@ struct ovl_sd_api {
     DIR        *(*opendir)      (const char *dir);
     int         (*reset_disk)   (void);
     void        (*shutdown)     (void);
+    const char *(*status)       (void);
 };
 
 struct ovl_state_api {

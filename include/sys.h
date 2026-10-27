@@ -35,5 +35,7 @@ dirent_t *readdir(DIR *dir);
 int closedir(DIR *dir);
 DIR *opendir(const char *dir);
 int reset_disk(void);
+/* what the sd card code saw when it last failed to mount, or NULL */
+const char *sd_status(void);
 
 #endif

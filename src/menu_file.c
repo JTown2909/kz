@@ -103,13 +103,21 @@ static _Bool update_file_list(void){
     clear_file_list();
     DIR *dir = opendir(".");
     if(!dir){
+        const char *err = strerror(errno);
         if(errno == ENODEV){
-            strcpy(file_menu_location->text, "no disk");
+            err = "no disk";
         }else if(errno == ENOENT){
-            strcpy(file_menu_location->text, "no filesystem");
-        }else{
-            strncpy(file_menu_location->text, strerror(errno), 31);
-            file_menu_location->text[31] = 0;
+            err = "no filesystem";
+        }
+        /* say what the card did too, to help when a card doesn't work */
+        const char *status = sd_status();
+        char *text = file_menu_location->text;
+        strncpy(text, err, 31);
+        text[31] = 0;
+        if(status){
+            strncat(text, " (", 31 - strlen(text));
+            strncat(text, status, 31 - strlen(text));
+            strncat(text, ")", 31 - strlen(text));
         }
         return 0;
     }

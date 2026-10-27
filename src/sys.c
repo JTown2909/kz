@@ -288,6 +288,11 @@ int mkdir(const char *path, mode_t mode) {
     return ret;
 }
 
+/* homeboy reports errors through errno only */
+const char *sd_status(void) {
+    return NULL;
+}
+
 int reset_disk(void) {
     volatile int ret = -1;
 

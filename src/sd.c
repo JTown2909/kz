@@ -197,6 +197,9 @@ static int fresult_errno(FRESULT res) {
     }
 }
 
+/* how the last mount went, for sd_status */
+static int sd_mount_res = -1;
+
 static int fail(FRESULT res) {
     errno = fresult_errno(res);
     return -1;
@@ -215,6 +218,7 @@ static int sd_mount(void) {
 
     if(!sd_cart_ready) {
         if(cart_init() != 0) {
+            sd_mount_res = -1;
             errno = ENODEV;
             return -1;
         }
@@ -228,6 +232,18 @@ static int sd_mount(void) {
     }
 
     FRESULT res = f_mount(fs, "", 1);
+    if(res == FR_NO_FILESYSTEM && cart_type == CART_EDX && !cart_card_reinit) {
+        /*
+        * the EverDrive X menu leaves the card set up, and says whether it
+        * takes block or byte addresses.  if that can't be trusted (some
+        * clones), the card reads back from the wrong place, so set it up
+        * from scratch, the way gz does, and try again.
+        */
+        cart_card_reinit = 1;
+        card_status = STA_NOINIT;
+        res = f_mount(fs, "", 1);
+    }
+    sd_mount_res = res;
     if(res != FR_OK) {
         f_mount(NULL, "", 0);
         free(fs);
@@ -252,6 +268,45 @@ void sd_shutdown(void) {
         free(sd_fs);
         sd_fs = NULL;
     }
+}
+
+static char *sd_itoa(char *p, int n) {
+    char buf[12];
+    int i = 0;
+    if(n < 0) {
+        *p++ = '-';
+        n = -n;
+    }
+    do {
+        buf[i++] = '0' + n % 10;
+        n /= 10;
+    } while(n > 0);
+    while(i > 0) {
+        *p++ = buf[--i];
+    }
+    *p = 0;
+    return p;
+}
+
+/*
+* e.g. "ed x fr13 crc2": the flashcart found, the FatFs result of the last
+* mount (13: no FAT volume, 3: the card didn't start, 1: read error) and how
+* many blocks had to be read again because of a CRC mismatch.
+*/
+const char *sd_status(void) {
+    static const char *const names[CART_MAX] = {
+        "64drive", "ed x", "ed v3", "sc64",
+    };
+    static char status[24];
+    if(cart_type < 0 || cart_type >= CART_MAX) {
+        return "no flashcart found";
+    }
+    char *p = stpcpy(status, names[cart_type]);
+    p = stpcpy(p, " fr");
+    p = sd_itoa(p, sd_mount_res);
+    p = stpcpy(p, " crc");
+    sd_itoa(p, cart_card_crc_errors > 9999 ? 9999 : cart_card_crc_errors);
+    return status;
 }
 
 int reset_disk(void) {

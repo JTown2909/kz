@@ -7,5 +7,5 @@ const struct ovl_sd_api ovl_api OVL_API = {
     open,       creat,      mkdir,      chdir,
     stat,       getcwd,     close,      read,
     write,      readdir,    closedir,   opendir,
-    reset_disk, sd_shutdown,
+    reset_disk, sd_shutdown,    sd_status,
 };

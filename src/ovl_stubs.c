@@ -124,6 +124,11 @@ int reset_disk(void){
     return api ? api->reset_disk() : -1;
 }
 
+const char *sd_status(void){
+    struct ovl_sd_api *api = sd();
+    return api ? api->status() : NULL;
+}
+
 /* state.c */
 
 static struct ovl_state_api *state(void){
