@@ -28,6 +28,10 @@ extern int cart_exit(void);
 
 /* Swap high and low bytes per 16-bit word when reading into SDRAM */
 extern char cart_card_byteswap;
+/* Blocks read again because of a CRC mismatch (kz) */
+extern u32 cart_card_crc_errors;
+/* Initialize the card even if the EverDrive X menu already has (kz) */
+extern char cart_card_reinit;
 
 /* Initialize card */
 extern int cart_card_init(void);

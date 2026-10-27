@@ -141,6 +141,7 @@ static void __cart_buf_wr(void *addr)
 #define CMD1    (0x40| 1)
 #define CMD2    (0x40| 2)
 #define CMD3    (0x40| 3)
+#define CMD6    (0x40| 6)
 #define CMD7    (0x40| 7)
 #define CMD8    (0x40| 8)
 #define CMD9    (0x40| 9)
@@ -156,6 +157,13 @@ static unsigned char __sd_resp[17];
 static unsigned char __sd_cfg;
 static unsigned char __sd_type;
 static unsigned char __sd_flag;
+
+/* blocks read again because their CRC didn't match (kz) */
+u32 cart_card_crc_errors;
+/* initialize the card even if the EverDrive X menu already has (kz) */
+char cart_card_reinit;
+/* a block is read again this many times at most before giving up (kz) */
+#define SD_READ_RETRY   8
 
 static int __sd_crc7(const char *src)
 {
@@ -748,6 +756,33 @@ static int __edx_sd_close(void)
 	return 0;
 }
 
+/*
+ * CMD6: SWITCH_FUNC, switch the card to High Speed (kz). The EverDrive X runs
+ * the bus at 50MHz, which is only in spec for a card in High Speed mode; some
+ * cards give corrupted data otherwise. Cards without it just stay as they are.
+ */
+static void __edx_sd_hs(void)
+{
+	int n;
+	if (__edx_sd_cmd(CMD6, 0x80FFFFF1) < 0) return;
+	/* illegal command: no switch status follows */
+	if (__sd_resp[2] & 0x40) return;
+	/* Wait for the 64-byte switch status */
+	__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_4b);
+	n = 65536;
+	do
+	{
+		if (--n == 0) return;
+	}
+	while (__edx_sd_dat_rd() & 0xF);
+	__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_16b);
+	__cart_dma_rd(__cart_buf, EDX_SDIO_ARD_REG, 64);
+	__cart_dma_rd(__cart_buf, EDX_SDIO_ARD_REG, 8);
+	/* 8 clocks before the speed changes */
+	__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_8b);
+	__edx_sd_dat_rd();
+}
+
 int edx_card_init(void)
 {
 	int i;
@@ -757,7 +792,7 @@ int edx_card_init(void)
 	__cart_acs_get();
 	/* Check if already init */
 	boot_cfg = __cart_rd(EDX_BOOT_CFG_REG);
-	if (boot_cfg & EDX_BCFG_SD_INIT)
+	if ((boot_cfg & EDX_BCFG_SD_INIT) && !cart_card_reinit)
 	{
 		__sd_flag = boot_cfg & EDX_BCFG_SD_TYPE;
 	}
@@ -816,6 +851,9 @@ int edx_card_init(void)
 		if (__edx_sd_cmd(CMD55, rca) < 0) CART_ABORT();
 		if (__edx_sd_cmd(ACMD6, 2) < 0) CART_ABORT();
 	}
+	/* the switch is sent at the slow clock */
+	__sd_cfg = 0;
+	__edx_sd_hs();
 	__sd_cfg = EDX_SD_CFG_SPD;
 	__cart_acs_rel();
 	return 0;
@@ -825,12 +863,14 @@ int edx_card_rd_dram(void *dram, u32 lba, u32 count)
 {
 	char *addr = dram;
 	int n;
+	int retry = 0;
+	u64 crc;
 	__cart_acs_get();
-	/* SDSC takes byte address, SDHC takes LBA */
-	if (!__sd_flag) lba *= 512;
+restart:
 	/* CMD18: READ_MULTIPLE_BLOCK */
-	if (__edx_sd_cmd(CMD18, lba) < 0) CART_ABORT();
-	while (count-- > 0)
+	/* SDSC takes byte address, SDHC takes LBA */
+	if (__edx_sd_cmd(CMD18, __sd_flag ? lba : lba * 512) < 0) CART_ABORT();
+	while (count > 0)
 	{
 		/* Wait for card */
 		__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_4b);
@@ -845,16 +885,27 @@ int edx_card_rd_dram(void *dram, u32 lba, u32 count)
 		if ((long)addr & 7)
 		{
 			__cart_dma_rd(__cart_buf, EDX_SDIO_ARD_REG, 512);
+			__sd_crc16(&crc, __cart_buf);
 			__cart_buf_wr(addr);
 		}
 		else
 		{
 			__cart_dma_rd(addr, EDX_SDIO_ARD_REG, 512);
+			__sd_crc16(&crc, (const u64 *)addr);
 		}
 		/* 4x16-bit CRC (8 byte) */
-		/* We ignore the CRC */
 		__cart_dma_rd(__cart_buf, EDX_SDIO_ARD_REG, 8);
+		if (__cart_buf[0] != crc)
+		{
+			/* (kz) corrupted on the way from the card, read it again */
+			cart_card_crc_errors++;
+			if (__edx_sd_close() || ++retry > SD_READ_RETRY) CART_ABORT();
+			goto restart;
+		}
+		retry = 0;
 		addr += 512;
+		lba++;
+		count--;
 	}
 	if (__edx_sd_close()) CART_ABORT();
 	__cart_acs_rel();
@@ -1182,6 +1233,27 @@ static int __ed_sd_close(int flag)
 	return 0;
 }
 
+/* CMD6: SWITCH_FUNC, switch the card to High Speed before the 50MHz clock (kz) */
+static void __ed_sd_hs(void)
+{
+	int i;
+	int n;
+	if (__ed_sd_cmd(CMD6, 0x80FFFFF1) < 0) return;
+	/* illegal command: no switch status follows */
+	if (__sd_resp[2] & 0x40) return;
+	/* Wait for the 64-byte switch status */
+	__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_1b);
+	n = 65536;
+	do
+	{
+		if (--n == 0) return;
+	}
+	while (__ed_sd_dat_rd() & 1);
+	__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
+	/* status, CRC and 8 clocks before the speed changes */
+	for (i = 0; i < 64 + 8 + 1; i++) __ed_sd_dat_rd();
+}
+
 int ed_card_init(void)
 {
 	int i;
@@ -1306,6 +1378,7 @@ int ed_card_init(void)
 		/* ACMD6: SET_BUS_WIDTH */
 		if (__ed_sd_cmd(CMD55, rca) < 0) CART_ABORT();
 		if (__ed_sd_cmd(ACMD6, 2) < 0) CART_ABORT();
+		__ed_sd_hs();
 		__sd_cfg = ED_SPI_SPD_50|ED_SPI_SS;
 	}
 	__cart_acs_rel();
@@ -1317,12 +1390,15 @@ int ed_card_rd_dram(void *dram, u32 lba, u32 count)
 	char *addr = dram;
 	int i;
 	int n;
+	int retry = 0;
+	u64 crc;
+	u64 rx;
 	__cart_acs_get();
-	/* SDSC takes byte address, SDHC takes LBA */
-	if (!__sd_flag) lba *= 512;
+restart:
 	/* CMD18: READ_MULTIPLE_BLOCK */
-	if (__ed_sd_cmd(CMD18, lba) < 0) CART_ABORT();
-	while (count-- > 0)
+	/* SDSC takes byte address, SDHC takes LBA */
+	if (__ed_sd_cmd(CMD18, __sd_flag ? lba : lba * 512) < 0) CART_ABORT();
+	while (count > 0)
 	{
 		/* Wait for card */
 		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_1b);
@@ -1335,12 +1411,37 @@ int ed_card_rd_dram(void *dram, u32 lba, u32 count)
 		/* Read data */
 		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
 		for (i = 0; i < 512; i++) addr[i] = __ed_sd_dat_rd();
-		/* SPI: 1x16-bit CRC (2 byte) */
+		/* SPI: 1x16-bit CRC (2 byte), ignored */
 		/* SD:  4x16-bit CRC (8 byte) */
-		/* We ignore the CRC */
-		n = !__sd_type ? 2 : 8;
-		for (i = 0; i < n; i++) __ed_sd_dat_rd();
+		if (!__sd_type)
+		{
+			for (i = 0; i < 2; i++) __ed_sd_dat_rd();
+		}
+		else
+		{
+			rx = 0;
+			for (i = 0; i < 8; i++) rx = rx << 8 | (__ed_sd_dat_rd() & 0xFF);
+			if ((long)addr & 7)
+			{
+				__cart_buf_rd(addr);
+				__sd_crc16(&crc, __cart_buf);
+			}
+			else
+			{
+				__sd_crc16(&crc, (const u64 *)addr);
+			}
+			if (rx != crc)
+			{
+				/* (kz) corrupted on the way from the card, read it again */
+				cart_card_crc_errors++;
+				if (__ed_sd_close(1) || ++retry > SD_READ_RETRY) CART_ABORT();
+				goto restart;
+			}
+			retry = 0;
+		}
 		addr += 512;
+		lba++;
+		count--;
 	}
 	if (__ed_sd_close(1)) CART_ABORT();
 	__cart_acs_rel();
