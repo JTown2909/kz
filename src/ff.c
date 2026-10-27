@@ -3312,6 +3312,18 @@ static UINT check_fs (	/* 0:FAT/FAT32 VBR, 1:exFAT VBR, 2:Not FAT and valid BS, 
 		if (sign == 0xAA55 && !memcmp(fs->win + BS_FilSysType32, "FAT32   ", 8)) {
 			return 0;	/* It is an FAT32 VBR */
 		}
+		/* (kz) a FAT32 VBR without the type label, which gz takes too: a sane FAT32 BPB */
+		w = ld_word(fs->win + BPB_BytsPerSec);
+		b = fs->win[BPB_SecPerClus];
+		if (sign == 0xAA55 && (w & (w - 1)) == 0 && w >= FF_MIN_SS && w <= FF_MAX_SS
+			&& b != 0 && (b & (b - 1)) == 0
+			&& ld_word(fs->win + BPB_RsvdSecCnt) != 0
+			&& (UINT)fs->win[BPB_NumFATs] - 1 <= 1
+			&& ld_word(fs->win + BPB_RootEntCnt) == 0
+			&& ld_word(fs->win + BPB_FATSz16) == 0 && ld_dword(fs->win + BPB_FATSz32) != 0
+			&& ld_dword(fs->win + BPB_TotSec32) >= 0x10000) {
+			return 0;
+		}
 		/* FAT volumes formatted with early MS-DOS lack BS_55AA and BS_FilSysType, so FAT VBR needs to be identified without them. */
 		w = ld_word(fs->win + BPB_BytsPerSec);
 		b = fs->win[BPB_SecPerClus];
