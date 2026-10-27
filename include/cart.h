@@ -32,6 +32,10 @@ extern char cart_card_byteswap;
 extern u32 cart_card_crc_errors;
 /* Initialize the card even if the EverDrive X menu already has (kz) */
 extern char cart_card_reinit;
+/* EverDrive V1-V3 firmware version (kz) */
+extern u32 cart_ed_version;
+/* Bit 0: SDHC (block addresses), bit 1: SD bus rather than SPI (kz) */
+extern int cart_card_info(void);
 
 /* Initialize card */
 extern int cart_card_init(void);

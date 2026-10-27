@@ -11,6 +11,9 @@
 static menu_t               file_menu;
 static menu_item_t         *file_menu_rows[FILE_ROWS];
 static menu_item_t         *file_menu_location = NULL;
+/* lines about the card shown in the file list when it has no filesystem */
+#define FILE_DIAG_LEN 128
+static char                *file_menu_diag = NULL;
 static menu_item_t         *file_menu_text_entry = NULL;
 static menu_item_t         *file_menu_accept_button = NULL;
 static menu_item_t         *file_menu_clear_button = NULL;
@@ -101,6 +104,9 @@ static _Bool add_file(const char *name, _Bool isdir){
 
 static _Bool update_file_list(void){
     clear_file_list();
+    if(file_menu_diag){
+        file_menu_diag[0] = 0;
+    }
     DIR *dir = opendir(".");
     if(!dir){
         const char *err = strerror(errno);
@@ -115,9 +121,17 @@ static _Bool update_file_list(void){
         strncpy(text, err, 31);
         text[31] = 0;
         if(status){
+            /* the first line goes after the error, the rest in the file list */
+            const char *nl = strchr(status, '\n');
+            int len = nl ? nl - status : (int)strlen(status);
             strncat(text, " (", 31 - strlen(text));
-            strncat(text, status, 31 - strlen(text));
+            int room = 31 - strlen(text);
+            strncat(text, status, len < room ? len : room);
             strncat(text, ")", 31 - strlen(text));
+            if(nl && file_menu_diag){
+                strncpy(file_menu_diag, nl + 1, FILE_DIAG_LEN - 1);
+                file_menu_diag[FILE_DIAG_LEN - 1] = 0;
+            }
         }
         return 0;
     }
@@ -173,6 +187,7 @@ static void update_view(void){
         for(int i = 0; i < FILE_ROWS;i++){
             menu_item_t *item = file_menu_rows[i];
             item->y_cell = y++;
+            item->interactive = 1;
             if(i < dir_file_cnt){
                 item->enabled = 1;
             }else{
@@ -188,6 +203,15 @@ static void update_view(void){
         file_menu_new_folder->enabled = 0;
         for(int i = 0; i < FILE_ROWS;i++){
             file_menu_rows[i]->enabled = 0;
+        }
+        /* the card's details, if there are any, in the first rows */
+        if(file_menu_diag && file_menu_diag[0]){
+            for(int i = 0; i < 3 && i < FILE_ROWS; i++){
+                menu_item_t *item = file_menu_rows[i];
+                item->y_cell = 3 + i;
+                item->enabled = 1;
+                item->interactive = 0;
+            }
         }
     }
 }
@@ -425,6 +449,28 @@ static int menu_file_onactivate(event_handler_t *handler, menu_event_t event, vo
 
 static void menu_file_row_draw(menu_item_t *item){
     int idx = (int)item->data + file_menu_offset;
+    if(dir_file_cnt == 0 && file_menu_diag && file_menu_diag[0]){
+        /* the card's details, one line per row */
+        const char *line = file_menu_diag;
+        for(int i = 0; i < (int)item->data && line; i++){
+            line = strchr(line, '\n');
+            if(line){
+                line++;
+            }
+        }
+        if(line){
+            const char *end = strchr(line, '\n');
+            int len = end ? end - line : (int)strlen(line);
+            char text[32];
+            if(len > 31){
+                len = 31;
+            }
+            memcpy(text, line, len);
+            text[len] = 0;
+            gfx_printf(menu_item_x(item) + 10, menu_item_y(item), "%s", text);
+        }
+        return;
+    }
     if(idx >= dir_file_cnt){
         return;
     }
@@ -529,6 +575,10 @@ static void menu_file_init(void){
 
     new_folder_name = malloc(256);
     cwd_buf = malloc(PATH_MAX_LEN);
+    file_menu_diag = malloc(FILE_DIAG_LEN);
+    if(file_menu_diag){
+        file_menu_diag[0] = 0;
+    }
 
     file_menu_ready = 1;
 }

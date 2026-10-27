@@ -162,6 +162,14 @@ static unsigned char __sd_flag;
 u32 cart_card_crc_errors;
 /* initialize the card even if the EverDrive X menu already has (kz) */
 char cart_card_reinit;
+/* EverDrive V1-V3 firmware version (kz) */
+u32 cart_ed_version;
+
+/* bit 0: SDHC (block addresses), bit 1: SD bus rather than SPI (kz) */
+int cart_card_info(void)
+{
+	return (__sd_flag ? 1 : 0) | (__sd_type ? 2 : 0);
+}
 /* a block is read again this many times at most before giving up (kz) */
 #define SD_READ_RETRY   8
 
@@ -1131,6 +1139,7 @@ int ed_init(void)
 	__cart_wr(ED_KEY_REG, ED_KEY);
 	ver = __cart_rd(ED_VER_REG) & 0xFFFF;
 	if (ver < 0x100 || ver >= 0x400) CART_ABORT();
+	cart_ed_version = ver;
 	__cart_wr(ED_CFG_REG, ED_CFG_SDRAM_ON);
 	__cart_dom2 = 0x80370404;
 	/* V1/V2/V2.5 do not have physical SRAM on board */

@@ -21,6 +21,7 @@
 #include "diskio.h"
 #undef DIR
 #include "sys.h"
+#include "printf.h"
 
 /*
 * the pi is shared with the game's pi manager thread, which loads data from
@@ -205,6 +206,60 @@ static int fail(FRESULT res) {
     return -1;
 }
 
+static uint32_t le(const uint8_t *p, int n) {
+    uint32_t v = 0;
+    while(n-- > 0) {
+        v = v << 8 | p[n];
+    }
+    return v;
+}
+
+/* what sd_diag found, shown under the error by the file menu */
+static char sd_diag_text[3][40];
+
+/*
+* when the card works but no FAT volume is found, note what is on it: how the
+* card is talked to, the partition table, and the boot sector of the first
+* partition (gz is more lenient about these than FatFs).
+*/
+static void sd_diag(void) {
+    int info = cart_card_info();
+    memset(sd_diag_text, 0, sizeof(sd_diag_text));
+    if(cart_type == CART_ED) {
+        sprintf(sd_diag_text[0], "fw%04x %s ", (int)cart_ed_version, info & 2 ? "sd bus" : "spi");
+    }
+    if(cart_type == CART_ED || cart_type == CART_EDX) {
+        strcat(sd_diag_text[0], info & 1 ? "sdhc" : "sdsc");
+    }
+    uint8_t *b = malloc(512);
+    if(b == NULL) {
+        return;
+    }
+    if(cart_card_rd_dram(b, 0, 1) != 0) {
+        strcpy(sd_diag_text[1], "s0 read error");
+    } else {
+        uint32_t lba = le(b + 0x1C6, 4);
+        sprintf(sd_diag_text[1], "s0 %02x%02x%02x %04x pt%02x@%u",
+                b[0], b[1], b[2], (int)le(b + 0x1FE, 2), b[0x1C2], (unsigned)lba);
+        if(lba != 0 && cart_card_rd_dram(b, lba, 1) != 0) {
+            strcpy(sd_diag_text[2], "pbr read error");
+        } else if(lba != 0) {
+            char lbl[9];
+            /* FAT32 keeps its type label at 0x52, FAT12/16 at 0x36 */
+            memcpy(lbl, b + (le(b + 0x16, 2) == 0 ? 0x52 : 0x36), 8);
+            lbl[8] = 0;
+            for(int i = 0; i < 8; i++) {
+                if(lbl[i] < 0x20 || lbl[i] > 0x7E) {
+                    lbl[i] = '.';
+                }
+            }
+            sprintf(sd_diag_text[2], "pbr %02x %04x %s %u %u %u %u", b[0], (int)le(b + 0x1FE, 2), lbl,
+                    (unsigned)le(b + 0x0B, 2), b[0x0D], b[0x10], (unsigned)le(b + 0x11, 2));
+        }
+    }
+    free(b);
+}
+
 /* detect the flashcart and mount the card the first time it is used */
 static int sd_mount(void) {
     if(sd_fs != NULL) {
@@ -244,6 +299,9 @@ static int sd_mount(void) {
         res = f_mount(fs, "", 1);
     }
     sd_mount_res = res;
+    if(res == FR_NO_FILESYSTEM) {
+        sd_diag();
+    }
     if(res != FR_OK) {
         f_mount(NULL, "", 0);
         free(fs);
@@ -291,13 +349,14 @@ static char *sd_itoa(char *p, int n) {
 /*
 * e.g. "ed x fr13 crc2": the flashcart found, the FatFs result of the last
 * mount (13: no FAT volume, 3: the card didn't start, 1: read error) and how
-* many blocks had to be read again because of a CRC mismatch.
+* many blocks had to be read again because of a CRC mismatch.  when no FAT
+* volume was found, sd_diag's lines follow, each after a newline.
 */
 const char *sd_status(void) {
     static const char *const names[CART_MAX] = {
         "64drive", "ed x", "ed v3", "sc64",
     };
-    static char status[24];
+    static char status[24 + 3 * 41];
     if(cart_type < 0 || cart_type >= CART_MAX) {
         return "no flashcart found";
     }
@@ -305,7 +364,11 @@ const char *sd_status(void) {
     p = stpcpy(p, " fr");
     p = sd_itoa(p, sd_mount_res);
     p = stpcpy(p, " crc");
-    sd_itoa(p, cart_card_crc_errors > 9999 ? 9999 : cart_card_crc_errors);
+    p = sd_itoa(p, cart_card_crc_errors > 9999 ? 9999 : cart_card_crc_errors);
+    for(int i = 0; i < 3 && sd_mount_res == FR_NO_FILESYSTEM; i++) {
+        *p++ = '\n';
+        p = stpcpy(p, sd_diag_text[i]);
+    }
     return status;
 }
 
