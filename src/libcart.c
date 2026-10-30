@@ -178,7 +178,10 @@ u32 cart_card_crc_errors;
 char cart_card_reinit;
 /* EverDrive V1-V3 firmware version (kz) */
 u32 cart_ed_version;
-/* why the last EverDrive V1-V3 read failed: step << 8 | response (kz) */
+/*
+ * why the last EverDrive V1-V3 read failed, step << 8 | response (kz): 1 the read
+ * command, 2 no data came, 3 the close after a DMA read, 4 the cart's DMA timed out
+ */
 u32 cart_card_err;
 
 /* bit 0: SDHC (block addresses), bit 1: SD bus rather than SPI (kz) */
@@ -1410,6 +1413,49 @@ int ed_card_init(void)
 	return 0;
 }
 
+/*
+ * (kz) on SPI (V1, V2.5 and the ED64+ clones) read through the cart's DMA into
+ * cart memory past the 32MiB game and copy it out, as gz does, rather than a
+ * byte at a time over the SPI register.
+ */
+#define ED_SCRATCH      0x12000000
+#define ED_SCRATCH_BLK  16
+
+static int __ed_card_rd_dma(char *addr, u32 lba, u32 count)
+{
+	u32 n;
+	u32 i;
+	while (count > 0)
+	{
+		n = count < ED_SCRATCH_BLK ? count : ED_SCRATCH_BLK;
+		if (ed_card_rd_cart(ED_SCRATCH, lba, n) < 0)
+		{
+			if (!cart_card_err) cart_card_err = 0x300;
+			return -1;
+		}
+		if ((long)addr & 7)
+		{
+			for (i = 0; i < n; i++)
+			{
+				__cart_acs_get();
+				__cart_dma_rd(__cart_buf, ED_SCRATCH + i*512, 512);
+				__cart_acs_rel();
+				memcpy(addr + i*512, __cart_buf, 512);
+			}
+		}
+		else
+		{
+			__cart_acs_get();
+			__cart_dma_rd(addr, ED_SCRATCH, n*512);
+			__cart_acs_rel();
+		}
+		addr += n*512;
+		lba += n;
+		count -= n;
+	}
+	return 0;
+}
+
 int ed_card_rd_dram(void *dram, u32 lba, u32 count)
 {
 	char *addr = dram;
@@ -1418,6 +1464,10 @@ int ed_card_rd_dram(void *dram, u32 lba, u32 count)
 	int retry = 0;
 	u64 crc;
 	u64 rx;
+	if (!__sd_type && ED_SCRATCH - 0x10000000 + ED_SCRATCH_BLK*512 <= cart_size)
+	{
+		return __ed_card_rd_dma(addr, lba, count);
+	}
 	__cart_acs_get();
 restart:
 	/* CMD18: READ_MULTIPLE_BLOCK */
@@ -1491,7 +1541,12 @@ int ed_card_rd_cart(u32 cart, u32 lba, u32 count)
 	/* SDSC takes byte address, SDHC takes LBA */
 	if (!__sd_flag) lba *= 512;
 	/* CMD18: READ_MULTIPLE_BLOCK */
-	if (__ed_sd_cmd(CMD18, lba) < 0) CART_ABORT();
+	cart_card_err = 0;
+	if (__ed_sd_cmd(CMD18, lba) < 0)
+	{
+		cart_card_err = 0x100 | __sd_resp[0];
+		CART_ABORT();
+	}
 	/* DMA requires 2048-byte alignment */
 	if (cart & 0x7FF)
 	{
@@ -1534,6 +1589,8 @@ int ed_card_rd_cart(u32 cart, u32 lba, u32 count)
 		{
 			if (resp & ED_STATE_DMA_TOUT)
 			{
+				/* (kz) the cart gave up waiting for the card */
+				cart_card_err = 0x400 | __sd_resp[0];
 				__cart_wr(ED_CFG_REG, ED_CFG_SDRAM_ON);
 				CART_ABORT();
 			}
