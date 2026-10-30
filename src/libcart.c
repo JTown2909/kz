@@ -1421,6 +1421,11 @@ int ed_card_init(void)
 #define ED_SCRATCH      0x12000000
 #define ED_SCRATCH_BLK  16
 
+/* (kz) set when the cart's DMA turned out not to write anything */
+static char __ed_no_dma;
+
+#define ED_DMA_MARK     0x6B7A646D61206E6FULL   /* "kzdma no" */
+
 static int __ed_card_rd_dma(char *addr, u32 lba, u32 count)
 {
 	u32 n;
@@ -1428,10 +1433,25 @@ static int __ed_card_rd_dma(char *addr, u32 lba, u32 count)
 	while (count > 0)
 	{
 		n = count < ED_SCRATCH_BLK ? count : ED_SCRATCH_BLK;
+		/* mark the buffer, to see whether the DMA wrote it */
+		__cart_buf[0] = ED_DMA_MARK;
+		__cart_acs_get();
+		__cart_dma_wr(__cart_buf, ED_SCRATCH, 8);
+		__cart_acs_rel();
 		if (ed_card_rd_cart(ED_SCRATCH, lba, n) < 0)
 		{
 			if (!cart_card_err) cart_card_err = 0x300;
 			return -1;
+		}
+		__cart_acs_get();
+		__cart_dma_rd(__cart_buf, ED_SCRATCH, 8);
+		__cart_acs_rel();
+		if (__cart_buf[0] == ED_DMA_MARK)
+		{
+			/* nothing came: read a byte at a time from now on */
+			__ed_no_dma = 1;
+			cart_card_err = 0x500;
+			return 1;
 		}
 		if ((long)addr & 7)
 		{
@@ -1464,9 +1484,11 @@ int ed_card_rd_dram(void *dram, u32 lba, u32 count)
 	int retry = 0;
 	u64 crc;
 	u64 rx;
-	if (!__sd_type && ED_SCRATCH - 0x10000000 + ED_SCRATCH_BLK*512 <= cart_size)
+	if (!__sd_type && !__ed_no_dma && ED_SCRATCH - 0x10000000 + ED_SCRATCH_BLK*512 <= cart_size)
 	{
-		return __ed_card_rd_dma(addr, lba, count);
+		/* 1: the DMA didn't work, the rest is read below */
+		i = __ed_card_rd_dma(addr, lba, count);
+		if (i <= 0) return i;
 	}
 	__cart_acs_get();
 restart:
@@ -1583,7 +1605,8 @@ int ed_card_rd_cart(u32 cart, u32 lba, u32 count)
 		}
 		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
 		__cart_wr(ED_DMA_LEN_REG, count-1);
-		__cart_wr(ED_DMA_ADDR_REG, (cart & 0x3FFFFFF) >> 11);
+		/* (kz) the full address, as gz and the EverDrive menus give it: ED64+ clones decode more of it */
+		__cart_wr(ED_DMA_ADDR_REG, (0xA0000000 | (cart & 0x1FFFFFFF)) >> 11);
 		__cart_wr(ED_DMA_CFG_REG, ED_DMA_SD_TO_RAM);
 		while ((resp = __cart_rd(ED_STATUS_REG)) & ED_STATE_DMA_BUSY)
 		{
