@@ -231,7 +231,7 @@ static void sd_diag(void) {
     if(cart_type == CART_ED || cart_type == CART_EDX) {
         strcat(sd_diag_text[0], info & 1 ? "sdhc" : "sdsc");
     }
-    /* e.g. e500: the cart's DMA wrote nothing, so reads went a byte at a time */
+    /* why the last card access failed, see cart_card_err in libcart.c */
     if(cart_card_err) {
         sprintf(sd_diag_text[0] + strlen(sd_diag_text[0]), " e%x", (int)cart_card_err);
     }

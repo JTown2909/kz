@@ -160,7 +160,9 @@ static void __cart_buf_wr(void *addr)
 #define CMD8    (0x40| 8)
 #define CMD9    (0x40| 9)
 #define CMD12   (0x40|12)
+#define CMD17   (0x40|17)
 #define CMD18   (0x40|18)
+#define CMD24   (0x40|24)
 #define CMD25   (0x40|25)
 #define CMD55   (0x40|55)
 #define CMD58   (0x40|58)
@@ -179,8 +181,9 @@ char cart_card_reinit;
 /* EverDrive V1-V3 firmware version (kz) */
 u32 cart_ed_version;
 /*
- * why the last EverDrive V1-V3 read failed, step << 8 | response (kz): 1 the read
- * command, 2 no data came, 3 the close after a DMA read, 4 the cart's DMA timed out
+ * why the last EverDrive V1-V3 card access failed, step << 8 | response (kz):
+ * 1 read command refused, 2 no data came, 4 the cart's DMA timed out,
+ * 6 write command refused, 7 data not accepted, 8 card stayed busy
  */
 u32 cart_card_err;
 
@@ -1414,64 +1417,90 @@ int ed_card_init(void)
 }
 
 /*
- * (kz) on SPI (V1, V2.5 and the ED64+ clones) read through the cart's DMA into
- * cart memory past the 32MiB game and copy it out, as gz does, rather than a
- * byte at a time over the SPI register.
+ * (kz) on SPI (V1, V2.5 and the ED64+ clones), one block per command (CMD17
+ * and CMD24), with no CMD12 or stop token after it. On an ED64+ with a
+ * generic card, the read after a CMD12 came back "illegal command".
  */
-#define ED_SCRATCH      0x12000000
-#define ED_SCRATCH_BLK  16
-
-/* (kz) set when the cart's DMA turned out not to write anything */
-static char __ed_no_dma;
-
-#define ED_DMA_MARK     0x6B7A646D61206E6FULL   /* "kzdma no" */
-
-static int __ed_card_rd_dma(char *addr, u32 lba, u32 count)
+static int __ed_spi_rd(char *addr, u32 lba, u32 count)
 {
-	u32 n;
-	u32 i;
-	while (count > 0)
+	int i;
+	u32 t;
+	while (count-- > 0)
 	{
-		n = count < ED_SCRATCH_BLK ? count : ED_SCRATCH_BLK;
-		/* mark the buffer, to see whether the DMA wrote it */
-		__cart_buf[0] = ED_DMA_MARK;
-		__cart_acs_get();
-		__cart_dma_wr(__cart_buf, ED_SCRATCH, 8);
-		__cart_acs_rel();
-		if (ed_card_rd_cart(ED_SCRATCH, lba, n) < 0)
+		/* CMD17: READ_SINGLE_BLOCK */
+		/* SDSC takes byte address, SDHC takes LBA */
+		if (__ed_sd_cmd(CMD17, __sd_flag ? lba : lba * 512) < 0 || (__sd_resp[0] & 0xFE))
 		{
-			if (!cart_card_err) cart_card_err = 0x300;
+			cart_card_err = 0x100 | __sd_resp[0];
 			return -1;
 		}
-		__cart_acs_get();
-		__cart_dma_rd(__cart_buf, ED_SCRATCH, 8);
-		__cart_acs_rel();
-		if (__cart_buf[0] == ED_DMA_MARK)
+		/* Wait for the data token */
+		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_1b);
+		t = __cart_count();
+		do
 		{
-			/* nothing came: read a byte at a time from now on */
-			__ed_no_dma = 1;
-			cart_card_err = 0x500;
-			return 1;
-		}
-		if ((long)addr & 7)
-		{
-			for (i = 0; i < n; i++)
+			if (__cart_count() - t > CART_POLL_TICKS)
 			{
-				__cart_acs_get();
-				__cart_dma_rd(__cart_buf, ED_SCRATCH + i*512, 512);
-				__cart_acs_rel();
-				memcpy(addr + i*512, __cart_buf, 512);
+				cart_card_err = 0x200 | __sd_resp[0];
+				return -1;
 			}
 		}
-		else
+		while (__ed_sd_dat_rd() & 1);
+		/* Read data, then the CRC (ignored) */
+		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
+		for (i = 0; i < 512; i++) addr[i] = __ed_sd_dat_rd();
+		for (i = 0; i < 2; i++) __ed_sd_dat_rd();
+		addr += 512;
+		lba++;
+	}
+	return 0;
+}
+
+static int __ed_spi_wr(const char *addr, u32 lba, u32 count)
+{
+	int i;
+	int resp;
+	u32 t;
+	while (count-- > 0)
+	{
+		/* CMD24: WRITE_BLOCK */
+		if (__ed_sd_cmd(CMD24, __sd_flag ? lba : lba * 512) < 0 || (__sd_resp[0] & 0xFE))
 		{
-			__cart_acs_get();
-			__cart_dma_rd(addr, ED_SCRATCH, n*512);
-			__cart_acs_rel();
+			cart_card_err = 0x600 | __sd_resp[0];
+			return -1;
 		}
-		addr += n*512;
-		lba += n;
-		count -= n;
+		/* A byte's gap, the data token, the data and a dummy CRC */
+		__ed_sd_mode(ED_SD_DAT_WR, ED_SD_DAT_8b);
+		__ed_sd_dat_wr(0xFF);
+		__ed_sd_dat_wr(0xFE);
+		for (i = 0; i < 512; i++) __ed_sd_dat_wr(addr[i]);
+		__ed_sd_dat_wr(0xFF);
+		__ed_sd_dat_wr(0xFF);
+		/* Data response: xxx00101 when accepted */
+		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
+		for (i = 0; i < 8; i++)
+		{
+			resp = __ed_sd_dat_rd() & 0xFF;
+			if (resp != 0xFF) break;
+		}
+		if ((resp & 0x1F) != 0x05)
+		{
+			cart_card_err = 0x700 | resp;
+			return -1;
+		}
+		/* Wait while the card is busy writing */
+		t = __cart_count();
+		do
+		{
+			if (__cart_count() - t > CART_POLL_TICKS)
+			{
+				cart_card_err = 0x800;
+				return -1;
+			}
+		}
+		while ((__ed_sd_dat_rd() & 0xFF) != 0xFF);
+		addr += 512;
+		lba++;
 	}
 	return 0;
 }
@@ -1484,13 +1513,13 @@ int ed_card_rd_dram(void *dram, u32 lba, u32 count)
 	int retry = 0;
 	u64 crc;
 	u64 rx;
-	if (!__sd_type && !__ed_no_dma && ED_SCRATCH - 0x10000000 + ED_SCRATCH_BLK*512 <= cart_size)
-	{
-		/* 1: the DMA didn't work, the rest is read below */
-		i = __ed_card_rd_dma(addr, lba, count);
-		if (i <= 0) return i;
-	}
 	__cart_acs_get();
+	if (!__sd_type)
+	{
+		i = __ed_spi_rd(addr, lba, count);
+		__cart_acs_rel();
+		return i;
+	}
 restart:
 	/* CMD18: READ_MULTIPLE_BLOCK */
 	/* SDSC takes byte address, SDHC takes LBA */
@@ -1635,6 +1664,12 @@ int ed_card_wr_dram(const void *dram, u32 lba, u32 count)
 	int n;
 	int resp;
 	__cart_acs_get();
+	if (!__sd_type)
+	{
+		i = __ed_spi_wr(addr, lba, count);
+		__cart_acs_rel();
+		return i;
+	}
 	/* SDSC takes byte address, SDHC takes LBA */
 	if (!__sd_flag) lba *= 512;
 	/* CMD25: WRITE_MULTIPLE_BLOCK */
