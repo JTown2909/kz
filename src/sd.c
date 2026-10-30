@@ -236,13 +236,13 @@ static void sd_diag(void) {
         return;
     }
     if(cart_card_rd_dram(b, 0, 1) != 0) {
-        strcpy(sd_diag_text[1], "s0 read error");
+        sprintf(sd_diag_text[1], "s0 read error %x", (int)cart_card_err);
     } else {
         uint32_t lba = le(b + 0x1C6, 4);
         sprintf(sd_diag_text[1], "s0 %02x%02x%02x %04x pt%02x@%u",
                 b[0], b[1], b[2], (int)le(b + 0x1FE, 2), b[0x1C2], (unsigned)lba);
         if(lba != 0 && cart_card_rd_dram(b, lba, 1) != 0) {
-            strcpy(sd_diag_text[2], "pbr read error");
+            sprintf(sd_diag_text[2], "pbr read error %x", (int)cart_card_err);
         } else if(lba != 0) {
             char lbl[9];
             /* FAT32 keeps its type label at 0x52, FAT12/16 at 0x36 */

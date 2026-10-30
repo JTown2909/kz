@@ -28,6 +28,20 @@ __attribute__((aligned(16)))
 #endif
 static u64 __cart_buf[512/8];
 
+/*
+ * (kz) EverDrive waits give up after about a second rather than a number of
+ * polls: a slow card can take longer than 65536 polls (about 0.1s) to start
+ * a read or finish a write.
+ */
+#define CART_POLL_TICKS 46875000
+
+static u32 __cart_count(void)
+{
+	u32 count;
+	__asm__ volatile ("mfc0 %0, $9" : "=r"(count));
+	return count;
+}
+
 static u32 __cart_dom1_rel;
 static u32 __cart_dom2_rel;
 static u32 __cart_dom1;
@@ -164,6 +178,8 @@ u32 cart_card_crc_errors;
 char cart_card_reinit;
 /* EverDrive V1-V3 firmware version (kz) */
 u32 cart_ed_version;
+/* why the last EverDrive V1-V3 read failed: step << 8 | response (kz) */
+u32 cart_card_err;
 
 /* bit 0: SDHC (block addresses), bit 1: SD bus rather than SPI (kz) */
 int cart_card_info(void)
@@ -755,10 +771,10 @@ static int __edx_sd_close(void)
 	__edx_sd_dat_rd();
 	__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_8b);
 	__edx_sd_dat_rd();
-	n = 65536;
+	n = __cart_count();
 	do
 	{
-		if (--n == 0) break;
+		if (__cart_count() - (u32)n > CART_POLL_TICKS) break;
 	}
 	while ((__edx_sd_dat_rd() & 0xFF) != 0xFF);
 	return 0;
@@ -777,10 +793,10 @@ static void __edx_sd_hs(void)
 	if (__sd_resp[2] & 0x40) return;
 	/* Wait for the 64-byte switch status */
 	__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_4b);
-	n = 65536;
+	n = __cart_count();
 	do
 	{
-		if (--n == 0) return;
+		if (__cart_count() - (u32)n > CART_POLL_TICKS) return;
 	}
 	while (__edx_sd_dat_rd() & 0xF);
 	__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_16b);
@@ -882,10 +898,10 @@ restart:
 	{
 		/* Wait for card */
 		__edx_sd_mode(EDX_SD_DAT_RD, EDX_SD_DAT_4b);
-		n = 65536;
+		n = __cart_count();
 		do
 		{
-			if (--n == 0) CART_ABORT();
+			if (__cart_count() - (u32)n > CART_POLL_TICKS) CART_ABORT();
 		}
 		while (__edx_sd_dat_rd() & 0xF);
 		/* Read data */
@@ -999,10 +1015,10 @@ int edx_card_wr_dram(const void *dram, u32 lba, u32 count)
 		for (i = 0; i < 3; i++) resp = resp << 1 | (__edx_sd_dat_rd() & 1);
 		if (resp != 2) CART_ABORT();
 		/* Wait for card */
-		n = 65536;
+		n = __cart_count();
 		do
 		{
-			if (--n == 0) CART_ABORT();
+			if (__cart_count() - (u32)n > CART_POLL_TICKS) CART_ABORT();
 		}
 		while ((__edx_sd_dat_rd() & 0xFF) != 0xFF);
 		addr += 512;
@@ -1050,10 +1066,10 @@ int edx_card_wr_cart(u32 cart, u32 lba, u32 count)
 		for (i = 0; i < 3; i++) resp = resp << 1 | (__edx_sd_dat_rd() & 1);
 		if (resp != 2) CART_ABORT();
 		/* Wait for card */
-		n = 65536;
+		n = __cart_count();
 		do
 		{
-			if (--n == 0) CART_ABORT();
+			if (__cart_count() - (u32)n > CART_POLL_TICKS) CART_ABORT();
 		}
 		while ((__edx_sd_dat_rd() & 0xFF) != 0xFF);
 		cart += 512;
@@ -1233,10 +1249,10 @@ static int __ed_sd_close(int flag)
 	}
 	/* Wait for card */
 	__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
-	n = 65536;
+	n = __cart_count();
 	do
 	{
-		if (--n == 0) break;
+		if (__cart_count() - (u32)n > CART_POLL_TICKS) break;
 	}
 	while ((__ed_sd_dat_rd() & 0xFF) != 0xFF);
 	return 0;
@@ -1252,10 +1268,10 @@ static void __ed_sd_hs(void)
 	if (__sd_resp[2] & 0x40) return;
 	/* Wait for the 64-byte switch status */
 	__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_1b);
-	n = 65536;
+	n = __cart_count();
 	do
 	{
-		if (--n == 0) return;
+		if (__cart_count() - (u32)n > CART_POLL_TICKS) return;
 	}
 	while (__ed_sd_dat_rd() & 1);
 	__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
@@ -1406,15 +1422,24 @@ int ed_card_rd_dram(void *dram, u32 lba, u32 count)
 restart:
 	/* CMD18: READ_MULTIPLE_BLOCK */
 	/* SDSC takes byte address, SDHC takes LBA */
-	if (__ed_sd_cmd(CMD18, __sd_flag ? lba : lba * 512) < 0) CART_ABORT();
+	if (__ed_sd_cmd(CMD18, __sd_flag ? lba : lba * 512) < 0)
+	{
+		cart_card_err = 0x100 | __sd_resp[0];
+		CART_ABORT();
+	}
 	while (count > 0)
 	{
 		/* Wait for card */
 		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_1b);
-		n = 65536;
+		n = __cart_count();
 		do
 		{
-			if (--n == 0) CART_ABORT();
+			if (__cart_count() - (u32)n > CART_POLL_TICKS)
+			{
+				/* (kz) no data: the command's response says why */
+				cart_card_err = 0x200 | __sd_resp[0];
+				CART_ABORT();
+			}
 		}
 		while (__ed_sd_dat_rd() & 1);
 		/* Read data */
@@ -1474,10 +1499,10 @@ int ed_card_rd_cart(u32 cart, u32 lba, u32 count)
 		{
 			/* Wait for card */
 			__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_1b);
-			n = 65536;
+			n = __cart_count();
 			do
 			{
-				if (--n == 0) CART_ABORT();
+				if (__cart_count() - (u32)n > CART_POLL_TICKS) CART_ABORT();
 			}
 			while (__ed_sd_dat_rd() & 1);
 			/* Read data */
@@ -1593,10 +1618,10 @@ int ed_card_wr_dram(const void *dram, u32 lba, u32 count)
 		}
 		/* Wait for card */
 		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
-		n = 65536;
+		n = __cart_count();
 		do
 		{
-			if (--n == 0) CART_ABORT();
+			if (__cart_count() - (u32)n > CART_POLL_TICKS) CART_ABORT();
 		}
 		while ((__ed_sd_dat_rd() & 0xFF) != 0xFF);
 		addr += 512;
@@ -1668,10 +1693,10 @@ int ed_card_wr_cart(u32 cart, u32 lba, u32 count)
 		}
 		/* Wait for card */
 		__ed_sd_mode(ED_SD_DAT_RD, ED_SD_DAT_8b);
-		n = 65536;
+		n = __cart_count();
 		do
 		{
-			if (--n == 0) CART_ABORT();
+			if (__cart_count() - (u32)n > CART_POLL_TICKS) CART_ABORT();
 		}
 		while ((__ed_sd_dat_rd() & 0xFF) != 0xFF);
 		cart += 512;

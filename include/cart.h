@@ -34,6 +34,8 @@ extern u32 cart_card_crc_errors;
 extern char cart_card_reinit;
 /* EverDrive V1-V3 firmware version (kz) */
 extern u32 cart_ed_version;
+/* Why the last EverDrive V1-V3 read failed: step << 8 | response (kz) */
+extern u32 cart_card_err;
 /* Bit 0: SDHC (block addresses), bit 1: SD bus rather than SPI (kz) */
 extern int cart_card_info(void);
 
